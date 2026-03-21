@@ -281,6 +281,71 @@ export async function setLegacyPlan(accountId: string, enabled: boolean): Promis
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Supabase JWT verification (for dashboard endpoints)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function verifySupabaseToken(token: string): Promise<string> {
+  const supabase = getSupabase();
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) {
+    throw new Error('Invalid or expired authentication token');
+  }
+  return user.id;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API key management (dashboard endpoints)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function createApiKey(
+  accountId: string,
+  keyHash: string,
+  keyPrefix: string
+): Promise<ApiKey> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('api_keys')
+    .insert({
+      account_id: accountId,
+      key_hash: keyHash,
+      key_prefix: keyPrefix,
+      environment: 'live',
+      revoked_at: null,
+    })
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(`Failed to create API key: ${error?.message}`);
+  return data as ApiKey;
+}
+
+export async function listApiKeys(accountId: string): Promise<ApiKey[]> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('api_keys')
+    .select('id, account_id, key_prefix, created_at, revoked_at')
+    .eq('account_id', accountId)
+    .is('revoked_at', null)
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error(`Failed to list API keys: ${error.message}`);
+  return (data ?? []) as ApiKey[];
+}
+
+export async function revokeApiKey(keyId: string): Promise<void> {
+  const supabase = getSupabase();
+
+  const { error } = await supabase
+    .from('api_keys')
+    .update({ revoked_at: new Date().toISOString() })
+    .eq('id', keyId);
+
+  if (error) throw new Error(`Failed to revoke API key: ${error.message}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -17,7 +17,8 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, createApiKey, listApiKeys, revokeApiKey } from './services/database.js';
+import * as crypto from 'crypto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // In-memory rate limiter
@@ -466,6 +467,123 @@ app.post(
       const e = err as Error;
       console.error('[stripe] Failed to create checkout session:', e.message);
       res.status(500).json({ error: 'STRIPE_ERROR', message: 'Failed to create checkout session' });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API key management (dashboard endpoints — auth via Supabase JWT)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const APIKEY_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+
+function generateApiKey(): { fullKey: string; prefix: string; hash: string } {
+  const bytes = crypto.randomBytes(32);
+  let randomPart = '';
+  for (let i = 0; i < 32; i++) {
+    randomPart += APIKEY_CHARS[bytes[i] % APIKEY_CHARS.length];
+  }
+  const fullKey = `hk_live_${randomPart}`;
+  const prefix = fullKey.slice(0, 16); // "hk_live_XXXXXXXX" — enough to identify without revealing
+  const hash = crypto.createHash('sha256').update(fullKey).digest('hex');
+  return { fullKey, prefix, hash };
+}
+
+async function requireSupabaseAuth(authHeader: string | undefined): Promise<void> {
+  if (!authHeader?.startsWith('Bearer ')) {
+    throw Object.assign(new Error('Missing or invalid Authorization header'), { status: 401 });
+  }
+  const token = authHeader.slice('Bearer '.length).trim();
+  await verifySupabaseToken(token);
+}
+
+// POST /api/keys — generate a new API key for the given account
+app.post(
+  '/api/keys',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const { account_id } = req.body as { account_id?: string };
+    if (!account_id) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'account_id is required' });
+      return;
+    }
+
+    try {
+      const { fullKey, prefix, hash } = generateApiKey();
+      await createApiKey(account_id, hash, prefix);
+      res.status(201).json({ key: fullKey });
+    } catch (err) {
+      const e = err as Error;
+      console.error('[api/keys] Failed to create key:', e.message);
+      res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to create API key' });
+    }
+  }
+);
+
+// GET /api/keys — list non-revoked keys for an account (prefix, id, created_at only)
+app.get(
+  '/api/keys',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const { account_id } = req.query as { account_id?: string };
+    if (!account_id) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'account_id query parameter is required' });
+      return;
+    }
+
+    try {
+      const keys = await listApiKeys(account_id);
+      res.json({
+        keys: keys.map((k) => ({
+          id: k.id,
+          prefix: k.key_prefix,
+          created_at: k.created_at,
+        })),
+      });
+    } catch (err) {
+      const e = err as Error;
+      console.error('[api/keys] Failed to list keys:', e.message);
+      res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to list API keys' });
+    }
+  }
+);
+
+// DELETE /api/keys/:id — revoke a key
+app.delete(
+  '/api/keys/:id',
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const id = req.params['id'] as string;
+    if (!id) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'Key ID is required' });
+      return;
+    }
+
+    try {
+      await revokeApiKey(id);
+      res.json({ revoked: true });
+    } catch (err) {
+      const e = err as Error;
+      console.error('[api/keys] Failed to revoke key:', e.message);
+      res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to revoke API key' });
     }
   }
 );

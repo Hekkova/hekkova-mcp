@@ -295,7 +295,7 @@ function createMcpServer() {
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
 // ── Stripe webhook — must be registered before express.json() to get raw body
-app.post('/billing/webhook', express_1.default.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json' }), async (req, res) => {
     const signature = req.headers['stripe-signature'];
     if (!signature || typeof signature !== 'string') {
         res.status(400).json({ error: 'Missing stripe-signature header' });
@@ -348,21 +348,11 @@ app.use(express_1.default.json({ limit: '100mb' })); // allow large base64 paylo
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '1.0.0' });
 });
-// ── Billing: create checkout session (authenticated) ───────────────────────
-app.post('/billing/checkout', async (req, res) => {
-    // Authenticate
-    let accountContext;
-    try {
-        accountContext = await (0, auth_js_1.validateApiKey)(req.headers.authorization);
-    }
-    catch (err) {
-        const e = err;
-        res.status(401).json({ error: 'UNAUTHORIZED', message: e.message });
-        return;
-    }
-    const { pack_id, success_url, cancel_url } = req.body;
-    if (!pack_id || !success_url || !cancel_url) {
-        res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id, success_url, and cancel_url are required' });
+// ── Billing: create checkout session ───────────────────────────────────────
+app.post('/api/checkout', async (req, res) => {
+    const { pack_id, account_id } = req.body;
+    if (!pack_id || !account_id) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id and account_id are required' });
         return;
     }
     const pack = stripe_js_1.MINT_PACKS[pack_id];
@@ -372,7 +362,7 @@ app.post('/billing/checkout', async (req, res) => {
         return;
     }
     try {
-        const session = await (0, stripe_js_1.createCheckoutSession)(pack, accountContext.account.id, success_url, cancel_url);
+        const session = await (0, stripe_js_1.createCheckoutSession)(pack, account_id, 'https://hekkova.com/dashboard?payment=success', 'https://hekkova.com/dashboard?payment=cancelled');
         res.json({ url: session.url, session_id: session.id, pack });
     }
     catch (err) {

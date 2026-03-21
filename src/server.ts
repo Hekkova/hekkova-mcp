@@ -371,7 +371,7 @@ app.use(cors());
 
 // ── Stripe webhook — must be registered before express.json() to get raw body
 app.post(
-  '/billing/webhook',
+  '/api/webhook/stripe',
   express.raw({ type: 'application/json' }),
   async (req: Request, res: Response): Promise<void> => {
     const signature = req.headers['stripe-signature'];
@@ -433,28 +433,17 @@ app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', version: '1.0.0' });
 });
 
-// ── Billing: create checkout session (authenticated) ───────────────────────
+// ── Billing: create checkout session ───────────────────────────────────────
 app.post(
-  '/billing/checkout',
+  '/api/checkout',
   async (req: Request, res: Response): Promise<void> => {
-    // Authenticate
-    let accountContext: AccountContext;
-    try {
-      accountContext = await validateApiKey(req.headers.authorization);
-    } catch (err) {
-      const e = err as Error;
-      res.status(401).json({ error: 'UNAUTHORIZED', message: e.message });
-      return;
-    }
-
-    const { pack_id, success_url, cancel_url } = req.body as {
+    const { pack_id, account_id } = req.body as {
       pack_id?: string;
-      success_url?: string;
-      cancel_url?: string;
+      account_id?: string;
     };
 
-    if (!pack_id || !success_url || !cancel_url) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id, success_url, and cancel_url are required' });
+    if (!pack_id || !account_id) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id and account_id are required' });
       return;
     }
 
@@ -468,9 +457,9 @@ app.post(
     try {
       const session = await createCheckoutSession(
         pack,
-        accountContext.account.id,
-        success_url,
-        cancel_url
+        account_id,
+        'https://hekkova.com/dashboard?payment=success',
+        'https://hekkova.com/dashboard?payment=cancelled'
       );
       res.json({ url: session.url, session_id: session.id, pack });
     } catch (err) {

@@ -23,8 +23,8 @@ export const MINT_PACKS: Record<string, MintPack> = {
     mintsAdded: 1,
     isLegacyPlan: false,
   },
-  first_light: {
-    id: 'first_light',
+  first_light_pack: {
+    id: 'first_light_pack',
     name: 'First Light Pack',
     description: '3 mint credits — start building your Arc.',
     priceInCents: 150,

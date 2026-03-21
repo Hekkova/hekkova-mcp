@@ -457,9 +457,12 @@ app.post(
       return;
     }
 
+    console.log('[checkout] request body:', JSON.stringify(req.body));
+
     const { pack_id } = req.body as { pack_id?: string };
 
     if (!pack_id) {
+      console.error('[checkout] 400 — pack_id missing from request body');
       res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id is required' });
       return;
     }
@@ -469,7 +472,8 @@ app.post(
     const pack = MINT_PACKS[pack_id];
     if (!pack) {
       const validPacks = Object.keys(MINT_PACKS).join(', ');
-      res.status(400).json({ error: 'INVALID_PACK', message: `Unknown pack_id. Valid options: ${validPacks}` });
+      console.error(`[checkout] 400 — received pack_id "${pack_id}", not in [${validPacks}]`);
+      res.status(400).json({ error: 'INVALID_PACK', message: `Unknown pack_id "${pack_id}". Valid options: ${validPacks}` });
       return;
     }
 
@@ -598,6 +602,31 @@ app.delete(
       console.error('[api/keys] Failed to revoke key:', e.message);
       res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to revoke API key' });
     }
+  }
+);
+
+// GET /api/account — return the authenticated user's account details
+app.get(
+  '/api/account',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    res.json({
+      id: account.id,
+      display_name: account.display_name,
+      light_id: account.light_id,
+      mints_remaining: account.mints_remaining,
+      total_minted: account.total_minted,
+      default_phase: account.default_phase,
+      legacy_plan: account.legacy_plan,
+      created_at: account.created_at,
+    });
   }
 );
 

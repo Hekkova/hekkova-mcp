@@ -284,13 +284,33 @@ export async function setLegacyPlan(accountId: string, enabled: boolean): Promis
 // Supabase JWT verification (for dashboard endpoints)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function verifySupabaseToken(token: string): Promise<string> {
+export async function verifySupabaseToken(token: string): Promise<{ id: string; email: string | undefined }> {
   const supabase = getSupabase();
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) {
     throw new Error('Invalid or expired authentication token');
   }
-  return user.id;
+  return { id: user.id, email: user.email };
+}
+
+export async function insertAccount(id: string, displayName: string): Promise<Account> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('accounts')
+    .insert({
+      id,
+      display_name: displayName,
+      mints_remaining: 0,
+      total_minted: 0,
+      default_phase: 'new_moon',
+      legacy_plan: false,
+    })
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(`Failed to create account: ${error?.message}`);
+  return data as Account;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

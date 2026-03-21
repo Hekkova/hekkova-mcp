@@ -17,7 +17,7 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, createApiKey, listApiKeys, revokeApiKey } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey } from './services/database.js';
 import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
 
@@ -502,12 +502,12 @@ async function requireSupabaseAuth(authHeader: string | undefined): Promise<Acco
     throw Object.assign(new Error('Missing or invalid Authorization header'), { status: 401 });
   }
   const token = authHeader.slice('Bearer '.length).trim();
-  const userId = await verifySupabaseToken(token);
-  const account = await getAccount(userId);
-  if (!account) {
-    throw Object.assign(new Error('No account found for authenticated user'), { status: 401 });
-  }
-  return account;
+  const { id: userId, email } = await verifySupabaseToken(token);
+  const existing = await getAccount(userId);
+  if (existing) return existing;
+  // First login — provision an account row for this Supabase user
+  const displayName = email ? email.split('@')[0] : userId.slice(0, 8);
+  return insertAccount(userId, displayName);
 }
 
 // POST /api/keys — generate a new API key for the authenticated account

@@ -1,0 +1,290 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.hashKey = hashKey;
+exports.getAccountByKeyHash = getAccountByKeyHash;
+exports.getMomentByBlockId = getMomentByBlockId;
+exports.listMoments = listMoments;
+exports.insertMoment = insertMoment;
+exports.updateMomentPhase = updateMomentPhase;
+exports.decrementMints = decrementMints;
+exports.incrementTotalMinted = incrementTotalMinted;
+exports.getAllMoments = getAllMoments;
+exports.getAccount = getAccount;
+exports.seedTestData = seedTestData;
+const supabase_js_1 = require("@supabase/supabase-js");
+const crypto = __importStar(require("crypto"));
+const config_js_1 = require("../config.js");
+// ─────────────────────────────────────────────────────────────────────────────
+// Supabase client (service role — full access, used server-side only)
+// ─────────────────────────────────────────────────────────────────────────────
+let _supabase = null;
+function getSupabase() {
+    if (!_supabase) {
+        _supabase = (0, supabase_js_1.createClient)(config_js_1.config.supabaseUrl || 'http://localhost:54321', config_js_1.config.supabaseServiceKey || 'service_role_placeholder');
+    }
+    return _supabase;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: SHA-256 hex hash
+// ─────────────────────────────────────────────────────────────────────────────
+function hashKey(key) {
+    return crypto.createHash('sha256').update(key).digest('hex');
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Auth lookup
+// ─────────────────────────────────────────────────────────────────────────────
+async function getAccountByKeyHash(keyHash) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('api_keys')
+        .select(`
+      id,
+      account_id,
+      key_hash,
+      key_prefix,
+      environment,
+      created_at,
+      revoked_at,
+      accounts (
+        id,
+        display_name,
+        light_id,
+        wallet_address,
+        mints_remaining,
+        total_minted,
+        default_phase,
+        legacy_plan,
+        created_at
+      )
+    `)
+        .eq('key_hash', keyHash)
+        .is('revoked_at', null)
+        .single();
+    if (error || !data)
+        return null;
+    const raw = data;
+    const accountRaw = raw.accounts;
+    if (!accountRaw)
+        return null;
+    const account = Array.isArray(accountRaw) ? accountRaw[0] : accountRaw;
+    const apiKey = {
+        id: raw.id,
+        account_id: raw.account_id,
+        key_hash: raw.key_hash,
+        key_prefix: raw.key_prefix,
+        environment: raw.environment,
+        created_at: raw.created_at,
+        revoked_at: raw.revoked_at,
+    };
+    return { account, apiKey };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Moment queries
+// ─────────────────────────────────────────────────────────────────────────────
+async function getMomentByBlockId(blockId, accountId) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .select('*')
+        .eq('block_id', blockId)
+        .eq('account_id', accountId)
+        .single();
+    if (error || !data)
+        return null;
+    return data;
+}
+async function listMoments(accountId, opts) {
+    const supabase = getSupabase();
+    let query = supabase
+        .from('moments')
+        .select('*', { count: 'exact' })
+        .eq('account_id', accountId);
+    if (opts.phase)
+        query = query.eq('phase', opts.phase);
+    if (opts.category)
+        query = query.eq('category', opts.category);
+    if (opts.search) {
+        query = query.or(`title.ilike.%${opts.search}%,description.ilike.%${opts.search}%`);
+    }
+    const order = opts.sort === 'oldest' ? 'asc' : 'desc';
+    query = query
+        .order('timestamp', { ascending: order === 'asc' })
+        .range(opts.offset, opts.offset + opts.limit - 1);
+    const { data, error, count } = await query;
+    if (error)
+        throw new Error(`Database error listing moments: ${error.message}`);
+    return {
+        moments: (data ?? []),
+        total: count ?? 0,
+    };
+}
+async function insertMoment(moment) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .insert(moment)
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to insert moment: ${error?.message}`);
+    return data;
+}
+async function updateMomentPhase(blockId, accountId, newPhase) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .update({ phase: newPhase, encrypted: newPhase !== 'full_moon' })
+        .eq('block_id', blockId)
+        .eq('account_id', accountId)
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to update moment phase: ${error?.message}`);
+    return data;
+}
+async function decrementMints(accountId) {
+    const supabase = getSupabase();
+    const { error } = await supabase.rpc('decrement_mints', { account_id: accountId });
+    if (error) {
+        // Fallback: manual decrement
+        const { data: acc } = await supabase
+            .from('accounts')
+            .select('mints_remaining')
+            .eq('id', accountId)
+            .single();
+        if (acc) {
+            await supabase
+                .from('accounts')
+                .update({ mints_remaining: Math.max(0, acc.mints_remaining - 1) })
+                .eq('id', accountId);
+        }
+    }
+}
+async function incrementTotalMinted(accountId) {
+    const supabase = getSupabase();
+    const { error } = await supabase.rpc('increment_total_minted', { account_id: accountId });
+    if (error) {
+        // Fallback: manual increment
+        const { data: acc } = await supabase
+            .from('accounts')
+            .select('total_minted')
+            .eq('id', accountId)
+            .single();
+        if (acc) {
+            await supabase
+                .from('accounts')
+                .update({ total_minted: acc.total_minted + 1 })
+                .eq('id', accountId);
+        }
+    }
+}
+async function getAllMoments(accountId) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .select('*')
+        .eq('account_id', accountId)
+        .order('timestamp', { ascending: false });
+    if (error)
+        throw new Error(`Failed to get all moments: ${error.message}`);
+    return (data ?? []);
+}
+async function getAccount(accountId) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('accounts')
+        .select('*')
+        .eq('id', accountId)
+        .single();
+    if (error || !data)
+        return null;
+    return data;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Seed (development only)
+// ─────────────────────────────────────────────────────────────────────────────
+async function seedTestData() {
+    const supabase = getSupabase();
+    const TEST_ACCOUNT_ID = '00000000-0000-0000-0000-000000000001';
+    const TEST_API_KEY = 'hk_test_local_dev_key_12345678';
+    const KEY_HASH = hashKey(TEST_API_KEY);
+    const KEY_PREFIX = TEST_API_KEY.slice(0, 12);
+    // Upsert account
+    const { error: accError } = await supabase.from('accounts').upsert({
+        id: TEST_ACCOUNT_ID,
+        display_name: 'Test User',
+        light_id: null,
+        wallet_address: null,
+        mints_remaining: 10,
+        total_minted: 0,
+        default_phase: 'new_moon',
+        legacy_plan: false,
+    }, { onConflict: 'id' });
+    if (accError) {
+        throw new Error(`Failed to seed account: ${accError.message}`);
+    }
+    // Upsert API key
+    const { error: keyError } = await supabase.from('api_keys').upsert({
+        account_id: TEST_ACCOUNT_ID,
+        key_hash: KEY_HASH,
+        key_prefix: KEY_PREFIX,
+        environment: 'test',
+        revoked_at: null,
+    }, { onConflict: 'key_hash' });
+    if (keyError) {
+        throw new Error(`Failed to seed API key: ${keyError.message}`);
+    }
+    console.log('\n✅ Test data seeded successfully.');
+    console.log('─────────────────────────────────────────');
+    console.log(`Test API Key:  ${TEST_API_KEY}`);
+    console.log(`Key Hash:      ${KEY_HASH}`);
+    console.log(`Account ID:    ${TEST_ACCOUNT_ID}`);
+    console.log('─────────────────────────────────────────');
+    console.log('\nAdd to your Claude Desktop config (~/.config/claude/claude_desktop_config.json):');
+    console.log(JSON.stringify({
+        mcpServers: {
+            hekkova: {
+                type: 'url',
+                url: 'http://localhost:3000/mcp',
+                headers: {
+                    Authorization: `Bearer ${TEST_API_KEY}`,
+                },
+            },
+        },
+    }, null, 2));
+    console.log('');
+}
+//# sourceMappingURL=database.js.map

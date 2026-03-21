@@ -377,7 +377,28 @@ app.get('/health', (_req: Request, res: Response) => {
 app.post(
   '/mcp',
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    // 1. Authenticate
+    const body = req.body as { method?: string; params?: { name?: string } };
+
+    // 1. Allow tools/list unauthenticated so clients can discover all tools
+    if (body?.method === 'tools/list') {
+      const mcpServer = createMcpServer();
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+      });
+      res.on('close', () => {
+        transport.close().catch(() => undefined);
+        mcpServer.close().catch(() => undefined);
+      });
+      try {
+        await mcpServer.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      } catch (err) {
+        next(err);
+      }
+      return;
+    }
+
+    // 2. Authenticate all other requests
     let accountContext: AccountContext;
     try {
       accountContext = await validateApiKey(req.headers.authorization);
@@ -407,8 +428,6 @@ app.post(
     }
 
     // 3. Detect if this is a mint call for the secondary mint rate limit
-    // We inspect the JSON body to check for mint tool calls
-    const body = req.body as { method?: string; params?: { name?: string } };
     const isMintCall =
       body?.method === 'tools/call' &&
       (body?.params?.name === 'mint_moment' || body?.params?.name === 'mint_from_url');

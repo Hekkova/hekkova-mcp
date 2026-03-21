@@ -17,7 +17,8 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, createApiKey, listApiKeys, revokeApiKey } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, createApiKey, listApiKeys, revokeApiKey } from './services/database.js';
+import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -438,15 +439,22 @@ app.get('/health', (_req: Request, res: Response) => {
 app.post(
   '/api/checkout',
   async (req: Request, res: Response): Promise<void> => {
-    const { pack_id, account_id } = req.body as {
-      pack_id?: string;
-      account_id?: string;
-    };
-
-    if (!pack_id || !account_id) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id and account_id are required' });
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
       return;
     }
+
+    const { pack_id } = req.body as { pack_id?: string };
+
+    if (!pack_id) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id is required' });
+      return;
+    }
+
+    const account_id = account.id;
 
     const pack = MINT_PACKS[pack_id];
     if (!pack) {
@@ -489,34 +497,34 @@ function generateApiKey(): { fullKey: string; prefix: string; hash: string } {
   return { fullKey, prefix, hash };
 }
 
-async function requireSupabaseAuth(authHeader: string | undefined): Promise<void> {
+async function requireSupabaseAuth(authHeader: string | undefined): Promise<Account> {
   if (!authHeader?.startsWith('Bearer ')) {
     throw Object.assign(new Error('Missing or invalid Authorization header'), { status: 401 });
   }
   const token = authHeader.slice('Bearer '.length).trim();
-  await verifySupabaseToken(token);
+  const userId = await verifySupabaseToken(token);
+  const account = await getAccount(userId);
+  if (!account) {
+    throw Object.assign(new Error('No account found for authenticated user'), { status: 401 });
+  }
+  return account;
 }
 
-// POST /api/keys — generate a new API key for the given account
+// POST /api/keys — generate a new API key for the authenticated account
 app.post(
   '/api/keys',
   async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
     try {
-      await requireSupabaseAuth(req.headers.authorization);
+      account = await requireSupabaseAuth(req.headers.authorization);
     } catch {
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
       return;
     }
 
-    const { account_id } = req.body as { account_id?: string };
-    if (!account_id) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'account_id is required' });
-      return;
-    }
-
     try {
       const { fullKey, prefix, hash } = generateApiKey();
-      await createApiKey(account_id, hash, prefix);
+      await createApiKey(account.id, hash, prefix);
       res.status(201).json({ key: fullKey });
     } catch (err) {
       const e = err as Error;
@@ -526,25 +534,20 @@ app.post(
   }
 );
 
-// GET /api/keys — list non-revoked keys for an account (prefix, id, created_at only)
+// GET /api/keys — list non-revoked keys for the authenticated account
 app.get(
   '/api/keys',
   async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
     try {
-      await requireSupabaseAuth(req.headers.authorization);
+      account = await requireSupabaseAuth(req.headers.authorization);
     } catch {
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
       return;
     }
 
-    const { account_id } = req.query as { account_id?: string };
-    if (!account_id) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'account_id query parameter is required' });
-      return;
-    }
-
     try {
-      const keys = await listApiKeys(account_id);
+      const keys = await listApiKeys(account.id);
       res.json({
         keys: keys.map((k) => ({
           id: k.id,

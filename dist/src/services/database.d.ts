@@ -22,5 +22,7 @@ export declare function decrementMints(accountId: string): Promise<void>;
 export declare function incrementTotalMinted(accountId: string): Promise<void>;
 export declare function getAllMoments(accountId: string): Promise<Moment[]>;
 export declare function getAccount(accountId: string): Promise<Account | null>;
+export declare function addMintsToAccount(accountId: string, amount: number): Promise<void>;
+export declare function setLegacyPlan(accountId: string, enabled: boolean): Promise<void>;
 export declare function seedTestData(): Promise<void>;
 //# sourceMappingURL=database.d.ts.map

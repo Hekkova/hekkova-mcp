@@ -43,6 +43,8 @@ exports.decrementMints = decrementMints;
 exports.incrementTotalMinted = incrementTotalMinted;
 exports.getAllMoments = getAllMoments;
 exports.getAccount = getAccount;
+exports.addMintsToAccount = addMintsToAccount;
+exports.setLegacyPlan = setLegacyPlan;
 exports.seedTestData = seedTestData;
 const supabase_js_1 = require("@supabase/supabase-js");
 const crypto = __importStar(require("crypto"));
@@ -232,6 +234,27 @@ async function getAccount(accountId) {
     if (error || !data)
         return null;
     return data;
+}
+async function addMintsToAccount(accountId, amount) {
+    const supabase = getSupabase();
+    const { data: acc } = await supabase
+        .from('accounts')
+        .select('mints_remaining')
+        .eq('id', accountId)
+        .single();
+    if (acc) {
+        await supabase
+            .from('accounts')
+            .update({ mints_remaining: acc.mints_remaining + amount })
+            .eq('id', accountId);
+    }
+}
+async function setLegacyPlan(accountId, enabled) {
+    const supabase = getSupabase();
+    await supabase
+        .from('accounts')
+        .update({ legacy_plan: enabled })
+        .eq('id', accountId);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)

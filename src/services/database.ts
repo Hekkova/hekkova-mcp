@@ -254,6 +254,32 @@ export async function getAccount(accountId: string): Promise<Account | null> {
   return data as Account;
 }
 
+export async function addMintsToAccount(accountId: string, amount: number): Promise<void> {
+  const supabase = getSupabase();
+
+  const { data: acc } = await supabase
+    .from('accounts')
+    .select('mints_remaining')
+    .eq('id', accountId)
+    .single();
+
+  if (acc) {
+    await supabase
+      .from('accounts')
+      .update({ mints_remaining: (acc as { mints_remaining: number }).mints_remaining + amount })
+      .eq('id', accountId);
+  }
+}
+
+export async function setLegacyPlan(accountId: string, enabled: boolean): Promise<void> {
+  const supabase = getSupabase();
+
+  await supabase
+    .from('accounts')
+    .update({ legacy_plan: enabled })
+    .eq('id', accountId);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)
 // ─────────────────────────────────────────────────────────────────────────────

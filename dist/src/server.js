@@ -19,6 +19,8 @@ const update_phase_js_1 = require("./tools/update-phase.js");
 const export_moments_js_1 = require("./tools/export-moments.js");
 const get_balance_js_1 = require("./tools/get-balance.js");
 const get_account_js_1 = require("./tools/get-account.js");
+const stripe_js_1 = require("./services/stripe.js");
+const database_js_1 = require("./services/database.js");
 const generalLimits = new Map();
 const mintLimits = new Map();
 const WINDOW_MS = 60 * 1000; // 1 minute
@@ -292,10 +294,92 @@ function createMcpServer() {
 // ─────────────────────────────────────────────────────────────────────────────
 const app = (0, express_1.default)();
 app.use((0, cors_1.default)());
+// ── Stripe webhook — must be registered before express.json() to get raw body
+app.post('/billing/webhook', express_1.default.raw({ type: 'application/json' }), async (req, res) => {
+    const signature = req.headers['stripe-signature'];
+    if (!signature || typeof signature !== 'string') {
+        res.status(400).json({ error: 'Missing stripe-signature header' });
+        return;
+    }
+    let event;
+    try {
+        event = (0, stripe_js_1.constructWebhookEvent)(req.body, signature, config_js_1.config.stripeWebhookSecret);
+    }
+    catch (err) {
+        const e = err;
+        console.error(`[stripe] Webhook signature verification failed: ${e.message}`);
+        res.status(400).json({ error: 'Invalid webhook signature' });
+        return;
+    }
+    try {
+        if (event.type === 'checkout.session.completed') {
+            const session = event.data.object;
+            const accountId = session.client_reference_id;
+            const packId = session.metadata?.pack_id;
+            if (!accountId || !packId) {
+                console.error('[stripe] Webhook missing account_id or pack_id in session metadata');
+                res.status(400).json({ error: 'Missing metadata' });
+                return;
+            }
+            const pack = stripe_js_1.MINT_PACKS[packId];
+            if (!pack) {
+                console.error(`[stripe] Unknown pack_id: ${packId}`);
+                res.status(400).json({ error: 'Unknown pack' });
+                return;
+            }
+            if (pack.isLegacyPlan) {
+                await (0, database_js_1.setLegacyPlan)(accountId, true);
+                console.log(`[stripe] Legacy plan activated for account ${accountId}`);
+            }
+            else {
+                await (0, database_js_1.addMintsToAccount)(accountId, pack.mintsAdded);
+                console.log(`[stripe] Added ${pack.mintsAdded} mints to account ${accountId} (pack: ${packId})`);
+            }
+        }
+        res.json({ received: true });
+    }
+    catch (err) {
+        console.error('[stripe] Webhook handler error:', err);
+        res.status(500).json({ error: 'Webhook processing failed' });
+    }
+});
 app.use(express_1.default.json({ limit: '100mb' })); // allow large base64 payloads
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '1.0.0' });
+});
+// ── Billing: create checkout session (authenticated) ───────────────────────
+app.post('/billing/checkout', async (req, res) => {
+    // Authenticate
+    let accountContext;
+    try {
+        accountContext = await (0, auth_js_1.validateApiKey)(req.headers.authorization);
+    }
+    catch (err) {
+        const e = err;
+        res.status(401).json({ error: 'UNAUTHORIZED', message: e.message });
+        return;
+    }
+    const { pack_id, success_url, cancel_url } = req.body;
+    if (!pack_id || !success_url || !cancel_url) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id, success_url, and cancel_url are required' });
+        return;
+    }
+    const pack = stripe_js_1.MINT_PACKS[pack_id];
+    if (!pack) {
+        const validPacks = Object.keys(stripe_js_1.MINT_PACKS).join(', ');
+        res.status(400).json({ error: 'INVALID_PACK', message: `Unknown pack_id. Valid options: ${validPacks}` });
+        return;
+    }
+    try {
+        const session = await (0, stripe_js_1.createCheckoutSession)(pack, accountContext.account.id, success_url, cancel_url);
+        res.json({ url: session.url, session_id: session.id, pack });
+    }
+    catch (err) {
+        const e = err;
+        console.error('[stripe] Failed to create checkout session:', e.message);
+        res.status(500).json({ error: 'STRIPE_ERROR', message: 'Failed to create checkout session' });
+    }
 });
 // ── MCP endpoint ───────────────────────────────────────────────────────────
 app.post('/mcp', async (req, res, next) => {

@@ -395,11 +395,18 @@ app.post(
     try {
       if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
+
+        console.log('[stripe] checkout.session.completed — full session metadata:', JSON.stringify(session.metadata));
+        console.log('[stripe] client_reference_id:', session.client_reference_id);
+
         const accountId = session.client_reference_id;
         const packId = session.metadata?.pack_id;
 
+        console.log('[stripe] resolved account_id:', accountId);
+        console.log('[stripe] resolved pack_id:', packId);
+
         if (!accountId || !packId) {
-          console.error('[stripe] Webhook missing account_id or pack_id in session metadata');
+          console.error('[stripe] Webhook missing account_id or pack_id — aborting');
           res.status(400).json({ error: 'Missing metadata' });
           return;
         }
@@ -415,8 +422,11 @@ app.post(
           await setLegacyPlan(accountId, true);
           console.log(`[stripe] Legacy plan activated for account ${accountId}`);
         } else {
-          await addMintsToAccount(accountId, pack.mintsAdded);
-          console.log(`[stripe] Added ${pack.mintsAdded} mints to account ${accountId} (pack: ${packId})`);
+          const result = await addMintsToAccount(accountId, pack.mintsAdded);
+          console.log(`[stripe] addMintsToAccount result for account ${accountId} (pack: ${packId}):`, JSON.stringify(result));
+          if (result.error) {
+            console.error(`[stripe] Failed to add mints — error: ${result.error}`);
+          }
         }
       }
 

@@ -254,21 +254,35 @@ export async function getAccount(accountId: string): Promise<Account | null> {
   return data as Account;
 }
 
-export async function addMintsToAccount(accountId: string, amount: number): Promise<void> {
+export async function addMintsToAccount(
+  accountId: string,
+  amount: number
+): Promise<{ previousBalance: number | null; newBalance: number | null; error: string | null }> {
   const supabase = getSupabase();
 
-  const { data: acc } = await supabase
+  const { data: acc, error: fetchError } = await supabase
     .from('accounts')
     .select('mints_remaining')
     .eq('id', accountId)
     .single();
 
-  if (acc) {
-    await supabase
-      .from('accounts')
-      .update({ mints_remaining: (acc as { mints_remaining: number }).mints_remaining + amount })
-      .eq('id', accountId);
+  if (fetchError || !acc) {
+    return { previousBalance: null, newBalance: null, error: fetchError?.message ?? 'Account not found' };
   }
+
+  const previous = (acc as { mints_remaining: number }).mints_remaining;
+  const next = previous + amount;
+
+  const { error: updateError } = await supabase
+    .from('accounts')
+    .update({ mints_remaining: next })
+    .eq('id', accountId);
+
+  if (updateError) {
+    return { previousBalance: previous, newBalance: null, error: updateError.message };
+  }
+
+  return { previousBalance: previous, newBalance: next, error: null };
 }
 
 export async function setLegacyPlan(accountId: string, enabled: boolean): Promise<void> {

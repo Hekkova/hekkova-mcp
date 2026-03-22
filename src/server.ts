@@ -481,8 +481,8 @@ app.post(
       const session = await createCheckoutSession(
         pack,
         account_id,
-        'https://hekkova.com/dashboard?payment=success',
-        'https://hekkova.com/dashboard?payment=cancelled'
+        'https://app.hekkova.com/billing?payment=success',
+        'https://app.hekkova.com/billing?payment=cancelled'
       );
       res.json({ url: session.url, session_id: session.id, pack });
     } catch (err) {

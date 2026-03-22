@@ -415,7 +415,7 @@ app.post('/api/checkout', async (req, res) => {
         return;
     }
     try {
-        const session = await (0, stripe_js_1.createCheckoutSession)(pack, account_id, 'https://hekkova.com/dashboard?payment=success', 'https://hekkova.com/dashboard?payment=cancelled');
+        const session = await (0, stripe_js_1.createCheckoutSession)(pack, account_id, 'https://app.hekkova.com/billing?payment=success', 'https://app.hekkova.com/billing?payment=cancelled');
         res.json({ url: session.url, session_id: session.id, pack });
     }
     catch (err) {

@@ -254,6 +254,23 @@ export async function getAccount(accountId: string): Promise<Account | null> {
   return data as Account;
 }
 
+export async function updateAccount(
+  accountId: string,
+  fields: { display_name?: string; default_phase?: string }
+): Promise<Account> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('accounts')
+    .update(fields)
+    .eq('id', accountId)
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(`Failed to update account: ${error?.message}`);
+  return data as Account;
+}
+
 export async function addMintsToAccount(
   accountId: string,
   amount: number

@@ -22,6 +22,10 @@ export declare function decrementMints(accountId: string): Promise<void>;
 export declare function incrementTotalMinted(accountId: string): Promise<void>;
 export declare function getAllMoments(accountId: string): Promise<Moment[]>;
 export declare function getAccount(accountId: string): Promise<Account | null>;
+export declare function updateAccount(accountId: string, fields: {
+    display_name?: string;
+    default_phase?: string;
+}): Promise<Account>;
 export declare function addMintsToAccount(accountId: string, amount: number): Promise<{
     previousBalance: number | null;
     newBalance: number | null;

@@ -43,6 +43,7 @@ exports.decrementMints = decrementMints;
 exports.incrementTotalMinted = incrementTotalMinted;
 exports.getAllMoments = getAllMoments;
 exports.getAccount = getAccount;
+exports.updateAccount = updateAccount;
 exports.addMintsToAccount = addMintsToAccount;
 exports.setLegacyPlan = setLegacyPlan;
 exports.verifySupabaseToken = verifySupabaseToken;
@@ -238,6 +239,18 @@ async function getAccount(accountId) {
         .single();
     if (error || !data)
         return null;
+    return data;
+}
+async function updateAccount(accountId, fields) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('accounts')
+        .update(fields)
+        .eq('id', accountId)
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to update account: ${error?.message}`);
     return data;
 }
 async function addMintsToAccount(accountId, amount) {

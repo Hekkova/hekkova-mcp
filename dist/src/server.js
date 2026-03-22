@@ -544,6 +544,49 @@ app.get('/api/account', async (req, res) => {
         created_at: account.created_at,
     });
 });
+// PATCH /api/account — update display_name and/or default_phase
+app.patch('/api/account', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    const { display_name, default_phase } = req.body;
+    const validPhases = ['new_moon', 'crescent', 'gibbous', 'full_moon'];
+    const fields = {};
+    if (display_name !== undefined) {
+        if (typeof display_name !== 'string' || display_name.trim().length === 0) {
+            res.status(400).json({ error: 'BAD_REQUEST', message: 'display_name must be a non-empty string' });
+            return;
+        }
+        fields.display_name = display_name.trim();
+    }
+    if (default_phase !== undefined) {
+        if (!validPhases.includes(default_phase)) {
+            res.status(400).json({ error: 'BAD_REQUEST', message: `default_phase must be one of: ${validPhases.join(', ')}` });
+            return;
+        }
+        fields.default_phase = default_phase;
+    }
+    if (Object.keys(fields).length === 0) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'Provide at least one of: display_name, default_phase' });
+        return;
+    }
+    const updated = await (0, database_js_1.updateAccount)(account.id, fields);
+    res.json({
+        id: updated.id,
+        display_name: updated.display_name,
+        light_id: updated.light_id,
+        mints_remaining: updated.mints_remaining,
+        total_minted: updated.total_minted,
+        default_phase: updated.default_phase,
+        legacy_plan: updated.legacy_plan,
+        created_at: updated.created_at,
+    });
+});
 // GET /api/export — download all moments as JSON or CSV
 app.get('/api/export', async (req, res) => {
     let account;

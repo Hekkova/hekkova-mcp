@@ -17,7 +17,7 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount } from './services/database.js';
 import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
 
@@ -626,6 +626,57 @@ app.get(
       default_phase: account.default_phase,
       legacy_plan: account.legacy_plan,
       created_at: account.created_at,
+    });
+  }
+);
+
+// PATCH /api/account — update display_name and/or default_phase
+app.patch(
+  '/api/account',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const { display_name, default_phase } = req.body as { display_name?: unknown; default_phase?: unknown };
+    const validPhases = ['new_moon', 'crescent', 'gibbous', 'full_moon'];
+    const fields: { display_name?: string; default_phase?: string } = {};
+
+    if (display_name !== undefined) {
+      if (typeof display_name !== 'string' || display_name.trim().length === 0) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'display_name must be a non-empty string' });
+        return;
+      }
+      fields.display_name = display_name.trim();
+    }
+
+    if (default_phase !== undefined) {
+      if (!validPhases.includes(default_phase as string)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `default_phase must be one of: ${validPhases.join(', ')}` });
+        return;
+      }
+      fields.default_phase = default_phase as string;
+    }
+
+    if (Object.keys(fields).length === 0) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'Provide at least one of: display_name, default_phase' });
+      return;
+    }
+
+    const updated = await updateAccount(account.id, fields);
+    res.json({
+      id: updated.id,
+      display_name: updated.display_name,
+      light_id: updated.light_id,
+      mints_remaining: updated.mints_remaining,
+      total_minted: updated.total_minted,
+      default_phase: updated.default_phase,
+      legacy_plan: updated.legacy_plan,
+      created_at: updated.created_at,
     });
   }
 );

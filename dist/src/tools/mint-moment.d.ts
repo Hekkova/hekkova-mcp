@@ -17,8 +17,8 @@ export declare const MintMomentInputSchema: z.ZodObject<{
     media_type: "image/png" | "image/jpeg" | "image/gif" | "video/mp4" | "audio/mp3" | "audio/wav" | "text/plain";
     media: string;
     timestamp?: string | undefined;
-    description?: string | undefined;
     eclipse_reveal_date?: string | undefined;
+    description?: string | undefined;
     tags?: string[] | undefined;
 }, {
     title: string;
@@ -27,8 +27,8 @@ export declare const MintMomentInputSchema: z.ZodObject<{
     timestamp?: string | undefined;
     phase?: "new_moon" | "crescent" | "gibbous" | "full_moon" | undefined;
     category?: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | null | undefined;
-    description?: string | undefined;
     eclipse_reveal_date?: string | undefined;
+    description?: string | undefined;
     tags?: string[] | undefined;
 }>;
 export type MintMomentInput = z.infer<typeof MintMomentInputSchema>;

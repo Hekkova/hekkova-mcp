@@ -7,6 +7,7 @@ export declare const ListMomentsInputSchema: z.ZodObject<{
     category: z.ZodOptional<z.ZodEnum<["super_moon", "blue_moon", "super_blue_moon", "eclipse"]>>;
     search: z.ZodOptional<z.ZodString>;
     sort: z.ZodDefault<z.ZodEnum<["newest", "oldest"]>>;
+    sealed: z.ZodOptional<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
     sort: "newest" | "oldest";
     limit: number;
@@ -14,6 +15,7 @@ export declare const ListMomentsInputSchema: z.ZodObject<{
     search?: string | undefined;
     phase?: "new_moon" | "crescent" | "gibbous" | "full_moon" | undefined;
     category?: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | undefined;
+    sealed?: boolean | undefined;
 }, {
     search?: string | undefined;
     sort?: "newest" | "oldest" | undefined;
@@ -21,6 +23,7 @@ export declare const ListMomentsInputSchema: z.ZodObject<{
     category?: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
+    sealed?: boolean | undefined;
 }>;
 export type ListMomentsInput = z.infer<typeof ListMomentsInputSchema>;
 interface ListMomentsResponse {
@@ -39,6 +42,8 @@ interface MomentSummary {
     timestamp: string;
     media_cid: string;
     tags: string[];
+    sealed?: boolean;
+    reveals_at?: string;
 }
 export declare function handleListMoments(rawInput: unknown, accountContext: AccountContext): Promise<ListMomentsResponse>;
 export {};

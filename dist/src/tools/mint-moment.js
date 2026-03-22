@@ -51,9 +51,17 @@ async function executeMint(input, accountContext, overrides = {}) {
     const { account } = accountContext;
     // 1. Validate eclipse_reveal_date requirement
     if (input.category === 'eclipse' && !input.eclipse_reveal_date) {
-        const err = new Error('Eclipse category requires eclipse_reveal_date — the date/time when the sealed content can be decrypted.');
+        const err = new Error('Eclipse category requires eclipse_reveal_date parameter');
         err.code = 'ECLIPSE_MISSING_DATE';
         throw err;
+    }
+    if (input.category === 'eclipse' && input.eclipse_reveal_date) {
+        const revealDate = new Date(input.eclipse_reveal_date);
+        if (isNaN(revealDate.getTime()) || revealDate <= new Date()) {
+            const err = new Error('Eclipse reveal date must be in the future');
+            err.code = 'ECLIPSE_DATE_PAST';
+            throw err;
+        }
     }
     // 2. Validate media size
     const binarySize = base64DecodedSize(input.media);

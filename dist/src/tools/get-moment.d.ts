@@ -8,5 +8,5 @@ export declare const GetMomentInputSchema: z.ZodObject<{
     block_id: string;
 }>;
 export type GetMomentInput = z.infer<typeof GetMomentInputSchema>;
-export declare function handleGetMoment(rawInput: unknown, accountContext: AccountContext): Promise<Moment>;
+export declare function handleGetMoment(rawInput: unknown, accountContext: AccountContext): Promise<Moment | object>;
 //# sourceMappingURL=get-moment.d.ts.map

@@ -1,4 +1,4 @@
-import type { Account, ApiKey, Category, Moment, Phase } from '../types/index.js';
+import type { Account, ApiKey, Category, Heir, Moment, Phase } from '../types/index.js';
 export declare function hashKey(key: string): string;
 export declare function getAccountByKeyHash(keyHash: string): Promise<{
     account: Account;
@@ -12,6 +12,7 @@ export declare function listMoments(accountId: string, opts: {
     category?: Category;
     search?: string;
     sort: 'newest' | 'oldest';
+    sealed?: boolean;
 }): Promise<{
     moments: Moment[];
     total: number;
@@ -40,5 +41,9 @@ export declare function insertAccount(id: string, displayName: string): Promise<
 export declare function createApiKey(accountId: string, keyHash: string, keyPrefix: string): Promise<ApiKey>;
 export declare function listApiKeys(accountId: string): Promise<ApiKey[]>;
 export declare function revokeApiKey(keyId: string): Promise<void>;
+export declare function addHeir(accountId: string, heirEmail: string, heirName: string, accessLevel: 'full' | 'read_only'): Promise<Heir>;
+export declare function listHeirs(accountId: string): Promise<Heir[]>;
+export declare function updateHeirAccessLevel(heirId: string, accountId: string, accessLevel: 'full' | 'read_only'): Promise<Heir>;
+export declare function revokeHeir(heirId: string, accountId: string): Promise<void>;
 export declare function seedTestData(): Promise<void>;
 //# sourceMappingURL=database.d.ts.map

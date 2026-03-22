@@ -5,17 +5,20 @@ export declare const MintFromUrlInputSchema: z.ZodObject<{
     title: z.ZodOptional<z.ZodString>;
     phase: z.ZodDefault<z.ZodEnum<["new_moon", "crescent", "gibbous", "full_moon"]>>;
     category: z.ZodDefault<z.ZodNullable<z.ZodEnum<["super_moon", "blue_moon", "super_blue_moon", "eclipse"]>>>;
+    eclipse_reveal_date: z.ZodOptional<z.ZodString>;
     tags: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
 }, "strip", z.ZodTypeAny, {
     phase: "new_moon" | "crescent" | "gibbous" | "full_moon";
     category: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | null;
     url: string;
+    eclipse_reveal_date?: string | undefined;
     title?: string | undefined;
     tags?: string[] | undefined;
 }, {
     url: string;
     phase?: "new_moon" | "crescent" | "gibbous" | "full_moon" | undefined;
     category?: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | null | undefined;
+    eclipse_reveal_date?: string | undefined;
     title?: string | undefined;
     tags?: string[] | undefined;
 }>;

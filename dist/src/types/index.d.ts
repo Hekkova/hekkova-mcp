@@ -90,6 +90,21 @@ export interface MintResult {
     extracted_title?: string;
 }
 /**
+ * Heir record (maps to the `heirs` table in Supabase).
+ * Only Legacy Plan accounts can designate heirs.
+ */
+export interface Heir {
+    id: string;
+    account_id: string;
+    heir_email: string;
+    heir_name: string;
+    heir_wallet_address: string | null;
+    access_level: 'full' | 'read_only';
+    status: 'pending' | 'accepted' | 'revoked';
+    created_at: string;
+    revoked_at: string | null;
+}
+/**
  * Authenticated context attached to each request after API key validation.
  * Available to every tool handler through the request-scoped context map.
  */

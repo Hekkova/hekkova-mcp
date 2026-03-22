@@ -44,6 +44,7 @@ interface UpdatePhaseResponse {
   fee_charged: number;
   re_encrypted: boolean;
   new_media_cid: string | null;
+  message: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -129,7 +130,17 @@ export async function handleUpdatePhase(
   // 4. Update the phase in the database
   await updateMomentPhase(block_id, account.id, targetPhase);
 
-  const feeCharged = crossing && account.legacy_plan ? 0.0 : 0.0;
+  let feeCharged = 0.0;
+  let message: string;
+
+  if (account.legacy_plan) {
+    message = 'Phase updated. Unlimited Phase Shifts included with your Legacy Plan.';
+  } else if (crossing) {
+    feeCharged = 0.49;
+    message = 'Phase Shift fee: $0.49. Upgrade to Legacy Plan for unlimited Phase Shifts.';
+  } else {
+    message = 'Phase updated. No charge for transitions between private phases.';
+  }
 
   return {
     block_id,
@@ -138,5 +149,6 @@ export async function handleUpdatePhase(
     fee_charged: feeCharged,
     re_encrypted: reEncrypted,
     new_media_cid: newMediaCid,
+    message,
   };
 }

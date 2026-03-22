@@ -50,7 +50,7 @@ export const MINT_PACKS: Record<string, MintPack> = {
   legacy_plan: {
     id: 'legacy_plan',
     name: 'Legacy Plan',
-    description: 'Unlimited minting, priority rate limits, and full archive access — billed annually.',
+    description: 'Unlimited Phase Shifts, priority minting, and heir access designation. Coming soon: Eclipse time-locked moments, Filecoin-backed archival storage. Billed annually.',
     priceInCents: 4900,
     mintsAdded: 0,
     isLegacyPlan: true,

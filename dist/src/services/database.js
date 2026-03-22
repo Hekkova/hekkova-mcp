@@ -51,6 +51,10 @@ exports.insertAccount = insertAccount;
 exports.createApiKey = createApiKey;
 exports.listApiKeys = listApiKeys;
 exports.revokeApiKey = revokeApiKey;
+exports.addHeir = addHeir;
+exports.listHeirs = listHeirs;
+exports.updateHeirAccessLevel = updateHeirAccessLevel;
+exports.revokeHeir = revokeHeir;
 exports.seedTestData = seedTestData;
 const supabase_js_1 = require("@supabase/supabase-js");
 const crypto = __importStar(require("crypto"));
@@ -146,6 +150,16 @@ async function listMoments(accountId, opts) {
         query = query.eq('category', opts.category);
     if (opts.search) {
         query = query.or(`title.ilike.%${opts.search}%,description.ilike.%${opts.search}%`);
+    }
+    // Eclipse sealed filter: sealed = category is 'eclipse' AND reveal date is in the future
+    if (opts.sealed === true) {
+        const now = new Date().toISOString();
+        query = query.eq('category', 'eclipse').gt('eclipse_reveal_date', now);
+    }
+    else if (opts.sealed === false) {
+        const now = new Date().toISOString();
+        // Exclude moments that are currently sealed (eclipse with future reveal date)
+        query = query.or(`category.is.null,category.neq.eclipse,eclipse_reveal_date.is.null,eclipse_reveal_date.lte.${now}`);
     }
     const order = opts.sort === 'oldest' ? 'asc' : 'desc';
     query = query
@@ -350,6 +364,68 @@ async function revokeApiKey(keyId) {
         .eq('id', keyId);
     if (error)
         throw new Error(`Failed to revoke API key: ${error.message}`);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Heir management (Legacy Plan only)
+// TODO: Integrate with Lit Protocol ACC for heir decryption access
+// ─────────────────────────────────────────────────────────────────────────────
+function fakeWalletAddress() {
+    const hex = Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    return `0x${hex}`;
+}
+async function addHeir(accountId, heirEmail, heirName, accessLevel) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('heirs')
+        .insert({
+        account_id: accountId,
+        heir_email: heirEmail,
+        heir_name: heirName,
+        heir_wallet_address: fakeWalletAddress(),
+        access_level: accessLevel,
+        status: 'pending',
+        revoked_at: null,
+    })
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to add heir: ${error?.message}`);
+    return data;
+}
+async function listHeirs(accountId) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('heirs')
+        .select('*')
+        .eq('account_id', accountId)
+        .neq('status', 'revoked')
+        .order('created_at', { ascending: false });
+    if (error)
+        throw new Error(`Failed to list heirs: ${error.message}`);
+    return (data ?? []);
+}
+async function updateHeirAccessLevel(heirId, accountId, accessLevel) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('heirs')
+        .update({ access_level: accessLevel })
+        .eq('id', heirId)
+        .eq('account_id', accountId)
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to update heir: ${error?.message}`);
+    return data;
+}
+async function revokeHeir(heirId, accountId) {
+    const supabase = getSupabase();
+    const { error } = await supabase
+        .from('heirs')
+        .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+        .eq('id', heirId)
+        .eq('account_id', accountId);
+    if (error)
+        throw new Error(`Failed to revoke heir: ${error.message}`);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)

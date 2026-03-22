@@ -15,6 +15,7 @@ export const ListMomentsInputSchema = z.object({
     .optional(),
   search: z.string().optional(),
   sort: z.enum(['newest', 'oldest']).default('newest'),
+  sealed: z.boolean().optional(),
 });
 
 export type ListMomentsInput = z.infer<typeof ListMomentsInputSchema>;
@@ -41,6 +42,8 @@ interface MomentSummary {
   timestamp: string;
   media_cid: string;
   tags: string[];
+  sealed?: boolean;
+  reveals_at?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,11 +63,11 @@ export async function handleListMoments(
     throw err;
   }
 
-  const { limit, offset, phase, category, search, sort } = parsed.data;
+  const { limit, offset, phase, category, search, sort, sealed } = parsed.data;
   const accountId = accountContext.account.id;
 
   console.log(
-    `[${new Date().toISOString()}] list_moments | account=${accountId} | limit=${limit} offset=${offset} phase=${phase ?? 'all'} sort=${sort}`
+    `[${new Date().toISOString()}] list_moments | account=${accountId} | limit=${limit} offset=${offset} phase=${phase ?? 'all'} sort=${sort} sealed=${sealed ?? 'all'}`
   );
 
   const { moments, total } = await listMoments(accountId, {
@@ -74,19 +77,35 @@ export async function handleListMoments(
     category: category ?? null,
     search,
     sort,
+    sealed,
   });
 
-  const summaries: MomentSummary[] = moments.map((m) => ({
-    block_id: m.block_id,
-    token_id: m.token_id,
-    title: m.title,
-    phase: m.phase,
-    category: m.category,
-    encrypted: m.encrypted,
-    timestamp: m.timestamp,
-    media_cid: m.media_cid,
-    tags: m.tags,
-  }));
+  const now = new Date();
+
+  const summaries: MomentSummary[] = moments.map((m) => {
+    const isEclipse = m.category === 'eclipse' && m.eclipse_reveal_date != null;
+    const isSealed = isEclipse && new Date(m.eclipse_reveal_date!) > now;
+
+    const summary: MomentSummary = {
+      block_id: m.block_id,
+      token_id: m.token_id,
+      title: m.title,
+      phase: m.phase,
+      category: m.category,
+      encrypted: m.encrypted,
+      timestamp: m.timestamp,
+      // TODO: Replace with Lit Protocol time-based ACC for on-chain eclipse enforcement
+      media_cid: isSealed ? '' : m.media_cid,
+      tags: m.tags,
+    };
+
+    if (isEclipse) {
+      summary.sealed = isSealed;
+      if (isSealed) summary.reveals_at = m.eclipse_reveal_date!;
+    }
+
+    return summary;
+  });
 
   return { moments: summaries, total, limit, offset };
 }

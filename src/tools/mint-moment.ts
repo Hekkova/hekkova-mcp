@@ -62,10 +62,19 @@ export async function executeMint(
   // 1. Validate eclipse_reveal_date requirement
   if (input.category === 'eclipse' && !input.eclipse_reveal_date) {
     const err = new Error(
-      'Eclipse category requires eclipse_reveal_date — the date/time when the sealed content can be decrypted.'
+      'Eclipse category requires eclipse_reveal_date parameter'
     ) as Error & { code: string };
     err.code = 'ECLIPSE_MISSING_DATE';
     throw err;
+  }
+
+  if (input.category === 'eclipse' && input.eclipse_reveal_date) {
+    const revealDate = new Date(input.eclipse_reveal_date);
+    if (isNaN(revealDate.getTime()) || revealDate <= new Date()) {
+      const err = new Error('Eclipse reveal date must be in the future') as Error & { code: string };
+      err.code = 'ECLIPSE_DATE_PAST';
+      throw err;
+    }
   }
 
   // 2. Validate media size

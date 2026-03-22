@@ -15,6 +15,7 @@ exports.MintFromUrlInputSchema = zod_1.z.object({
         .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
         .nullable()
         .default(null),
+    eclipse_reveal_date: zod_1.z.string().optional(),
     tags: zod_1.z.array(zod_1.z.string()).max(20).optional(),
 });
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,7 +162,7 @@ async function handleMintFromUrl(rawInput, accountContext) {
         err.code = 'INVALID_INPUT';
         throw err;
     }
-    const { url, title: titleOverride, phase, category, tags } = parsed.data;
+    const { url, title: titleOverride, phase, category, eclipse_reveal_date, tags } = parsed.data;
     console.log(`[${new Date().toISOString()}] mint_from_url | account=${accountContext.account.id} | url=${url}`);
     const { media, mediaType, title, platform } = await fetchAndExtract(url, titleOverride);
     const mintResult = await (0, mint_moment_js_1.executeMint)({
@@ -170,6 +171,7 @@ async function handleMintFromUrl(rawInput, accountContext) {
         media_type: mediaType,
         phase,
         category,
+        eclipse_reveal_date,
         tags,
     }, accountContext, { source_url: url, source_platform: platform });
     return {

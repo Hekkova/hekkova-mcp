@@ -18,6 +18,7 @@ interface UpdatePhaseResponse {
     fee_charged: number;
     re_encrypted: boolean;
     new_media_cid: string | null;
+    message: string;
 }
 export declare function handleUpdatePhase(rawInput: unknown, accountContext: AccountContext): Promise<UpdatePhaseResponse>;
 export {};

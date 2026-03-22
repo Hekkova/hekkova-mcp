@@ -17,7 +17,7 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir } from './services/database.js';
 import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
 
@@ -144,7 +144,7 @@ function createMcpServer(): McpServer {
     name: 'hekkova',
     version: '1.0.0',
     description:
-      'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored forever on IPFS + Filecoin.',
+      'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored on IPFS (Filecoin archival coming soon).',
   });
 
   // ── mint_moment ────────────────────────────────────────────────────────────
@@ -678,6 +678,110 @@ app.patch(
       legacy_plan: updated.legacy_plan,
       created_at: updated.created_at,
     });
+  }
+);
+
+// ── Heir management (Legacy Plan only) ────────────────────────────────────
+
+// POST /api/heirs — add a new heir
+app.post(
+  '/api/heirs',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    if (!account.legacy_plan) {
+      res.status(403).json({ error: 'FORBIDDEN', message: 'Heir access designation requires a Legacy Plan.' });
+      return;
+    }
+
+    const { heir_email, heir_name, access_level } = req.body as { heir_email?: unknown; heir_name?: unknown; access_level?: unknown };
+
+    if (typeof heir_email !== 'string' || !heir_email.trim()) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'heir_email is required' });
+      return;
+    }
+    if (typeof heir_name !== 'string' || !heir_name.trim()) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'heir_name is required' });
+      return;
+    }
+    if (access_level !== 'full' && access_level !== 'read_only') {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'access_level must be "full" or "read_only"' });
+      return;
+    }
+
+    const heir = await addHeir(account.id, heir_email.trim(), heir_name.trim(), access_level);
+    res.status(201).json(heir);
+  }
+);
+
+// GET /api/heirs — list non-revoked heirs for the account
+app.get(
+  '/api/heirs',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const heirs = await listHeirs(account.id);
+    res.json(heirs);
+  }
+);
+
+// PATCH /api/heirs/:id — update heir access level
+app.patch(
+  '/api/heirs/:id',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const { access_level } = req.body as { access_level?: unknown };
+    if (access_level !== 'full' && access_level !== 'read_only') {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'access_level must be "full" or "read_only"' });
+      return;
+    }
+
+    try {
+      const heir = await updateHeirAccessLevel(String(req.params.id), account.id, access_level);
+      res.json(heir);
+    } catch {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'Heir not found or does not belong to this account' });
+    }
+  }
+);
+
+// DELETE /api/heirs/:id — revoke heir access (soft delete)
+app.delete(
+  '/api/heirs/:id',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    try {
+      await revokeHeir(String(req.params.id), account.id);
+      res.status(204).send();
+    } catch {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'Heir not found or does not belong to this account' });
+    }
   }
 );
 

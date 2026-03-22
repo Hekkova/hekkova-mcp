@@ -14,6 +14,7 @@ export const MintFromUrlInputSchema = z.object({
     .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
     .nullable()
     .default(null),
+  eclipse_reveal_date: z.string().optional(),
   tags: z.array(z.string()).max(20).optional(),
 });
 
@@ -204,7 +205,7 @@ export async function handleMintFromUrl(
     throw err;
   }
 
-  const { url, title: titleOverride, phase, category, tags } = parsed.data;
+  const { url, title: titleOverride, phase, category, eclipse_reveal_date, tags } = parsed.data;
 
   console.log(
     `[${new Date().toISOString()}] mint_from_url | account=${accountContext.account.id} | url=${url}`
@@ -219,6 +220,7 @@ export async function handleMintFromUrl(
       media_type: mediaType,
       phase,
       category,
+      eclipse_reveal_date,
       tags,
     },
     accountContext,

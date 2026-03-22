@@ -1,7 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import * as crypto from 'crypto';
 import { config } from '../config.js';
-import type { Account, AccountContext, ApiKey, Category, Moment, Phase } from '../types/index.js';
+import type { Account, AccountContext, ApiKey, Category, Heir, Moment, Phase } from '../types/index.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase client (service role — full access, used server-side only)
@@ -122,6 +122,7 @@ export async function listMoments(
     category?: Category;
     search?: string;
     sort: 'newest' | 'oldest';
+    sealed?: boolean;
   }
 ): Promise<{ moments: Moment[]; total: number }> {
   const supabase = getSupabase();
@@ -137,6 +138,16 @@ export async function listMoments(
     query = query.or(
       `title.ilike.%${opts.search}%,description.ilike.%${opts.search}%`
     );
+  }
+
+  // Eclipse sealed filter: sealed = category is 'eclipse' AND reveal date is in the future
+  if (opts.sealed === true) {
+    const now = new Date().toISOString();
+    query = query.eq('category', 'eclipse').gt('eclipse_reveal_date', now);
+  } else if (opts.sealed === false) {
+    const now = new Date().toISOString();
+    // Exclude moments that are currently sealed (eclipse with future reveal date)
+    query = query.or(`category.is.null,category.neq.eclipse,eclipse_reveal_date.is.null,eclipse_reveal_date.lte.${now}`);
   }
 
   const order = opts.sort === 'oldest' ? 'asc' : 'desc';
@@ -394,6 +405,89 @@ export async function revokeApiKey(keyId: string): Promise<void> {
     .eq('id', keyId);
 
   if (error) throw new Error(`Failed to revoke API key: ${error.message}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Heir management (Legacy Plan only)
+// TODO: Integrate with Lit Protocol ACC for heir decryption access
+// ─────────────────────────────────────────────────────────────────────────────
+
+function fakeWalletAddress(): string {
+  const hex = Array.from({ length: 40 }, () =>
+    Math.floor(Math.random() * 16).toString(16)
+  ).join('');
+  return `0x${hex}`;
+}
+
+export async function addHeir(
+  accountId: string,
+  heirEmail: string,
+  heirName: string,
+  accessLevel: 'full' | 'read_only'
+): Promise<Heir> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('heirs')
+    .insert({
+      account_id: accountId,
+      heir_email: heirEmail,
+      heir_name: heirName,
+      heir_wallet_address: fakeWalletAddress(),
+      access_level: accessLevel,
+      status: 'pending',
+      revoked_at: null,
+    })
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(`Failed to add heir: ${error?.message}`);
+  return data as Heir;
+}
+
+export async function listHeirs(accountId: string): Promise<Heir[]> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('heirs')
+    .select('*')
+    .eq('account_id', accountId)
+    .neq('status', 'revoked')
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error(`Failed to list heirs: ${error.message}`);
+  return (data ?? []) as Heir[];
+}
+
+export async function updateHeirAccessLevel(
+  heirId: string,
+  accountId: string,
+  accessLevel: 'full' | 'read_only'
+): Promise<Heir> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('heirs')
+    .update({ access_level: accessLevel })
+    .eq('id', heirId)
+    .eq('account_id', accountId)
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(`Failed to update heir: ${error?.message}`);
+  return data as Heir;
+}
+
+export async function revokeHeir(heirId: string, accountId: string): Promise<void> {
+  const supabase = getSupabase();
+
+  const { error } = await supabase
+    .from('heirs')
+    .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+    .eq('id', heirId)
+    .eq('account_id', accountId);
+
+  if (error) throw new Error(`Failed to revoke heir: ${error.message}`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

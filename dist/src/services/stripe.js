@@ -17,8 +17,8 @@ exports.MINT_PACKS = {
         mintsAdded: 1,
         isLegacyPlan: false,
     },
-    first_light: {
-        id: 'first_light',
+    first_light_pack: {
+        id: 'first_light_pack',
         name: 'First Light Pack',
         description: '3 mint credits — start building your Arc.',
         priceInCents: 150,
@@ -44,7 +44,7 @@ exports.MINT_PACKS = {
     legacy_plan: {
         id: 'legacy_plan',
         name: 'Legacy Plan',
-        description: 'Unlimited minting, priority rate limits, and full archive access — billed annually.',
+        description: 'Unlimited Phase Shifts, priority minting, and heir access designation. Coming soon: Eclipse time-locked moments, Filecoin-backed archival storage. Billed annually.',
         priceInCents: 4900,
         mintsAdded: 0,
         isLegacyPlan: true,

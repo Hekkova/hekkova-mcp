@@ -138,7 +138,7 @@ function createMcpServer() {
     const server = new mcp_js_1.McpServer({
         name: 'hekkova',
         version: '1.0.0',
-        description: 'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored forever on IPFS + Filecoin.',
+        description: 'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored on IPFS (Filecoin archival coming soon).',
     });
     // ── mint_moment ────────────────────────────────────────────────────────────
     server.tool('mint_moment', 'Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID.', {
@@ -586,6 +586,91 @@ app.patch('/api/account', async (req, res) => {
         legacy_plan: updated.legacy_plan,
         created_at: updated.created_at,
     });
+});
+// ── Heir management (Legacy Plan only) ────────────────────────────────────
+// POST /api/heirs — add a new heir
+app.post('/api/heirs', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    if (!account.legacy_plan) {
+        res.status(403).json({ error: 'FORBIDDEN', message: 'Heir access designation requires a Legacy Plan.' });
+        return;
+    }
+    const { heir_email, heir_name, access_level } = req.body;
+    if (typeof heir_email !== 'string' || !heir_email.trim()) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'heir_email is required' });
+        return;
+    }
+    if (typeof heir_name !== 'string' || !heir_name.trim()) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'heir_name is required' });
+        return;
+    }
+    if (access_level !== 'full' && access_level !== 'read_only') {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'access_level must be "full" or "read_only"' });
+        return;
+    }
+    const heir = await (0, database_js_1.addHeir)(account.id, heir_email.trim(), heir_name.trim(), access_level);
+    res.status(201).json(heir);
+});
+// GET /api/heirs — list non-revoked heirs for the account
+app.get('/api/heirs', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    const heirs = await (0, database_js_1.listHeirs)(account.id);
+    res.json(heirs);
+});
+// PATCH /api/heirs/:id — update heir access level
+app.patch('/api/heirs/:id', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    const { access_level } = req.body;
+    if (access_level !== 'full' && access_level !== 'read_only') {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'access_level must be "full" or "read_only"' });
+        return;
+    }
+    try {
+        const heir = await (0, database_js_1.updateHeirAccessLevel)(String(req.params.id), account.id, access_level);
+        res.json(heir);
+    }
+    catch {
+        res.status(404).json({ error: 'NOT_FOUND', message: 'Heir not found or does not belong to this account' });
+    }
+});
+// DELETE /api/heirs/:id — revoke heir access (soft delete)
+app.delete('/api/heirs/:id', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    try {
+        await (0, database_js_1.revokeHeir)(String(req.params.id), account.id);
+        res.status(204).send();
+    }
+    catch {
+        res.status(404).json({ error: 'NOT_FOUND', message: 'Heir not found or does not belong to this account' });
+    }
 });
 // GET /api/export — download all moments as JSON or CSV
 app.get('/api/export', async (req, res) => {

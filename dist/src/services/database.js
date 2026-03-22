@@ -45,6 +45,11 @@ exports.getAllMoments = getAllMoments;
 exports.getAccount = getAccount;
 exports.addMintsToAccount = addMintsToAccount;
 exports.setLegacyPlan = setLegacyPlan;
+exports.verifySupabaseToken = verifySupabaseToken;
+exports.insertAccount = insertAccount;
+exports.createApiKey = createApiKey;
+exports.listApiKeys = listApiKeys;
+exports.revokeApiKey = revokeApiKey;
 exports.seedTestData = seedTestData;
 const supabase_js_1 = require("@supabase/supabase-js");
 const crypto = __importStar(require("crypto"));
@@ -237,17 +242,24 @@ async function getAccount(accountId) {
 }
 async function addMintsToAccount(accountId, amount) {
     const supabase = getSupabase();
-    const { data: acc } = await supabase
+    const { data: acc, error: fetchError } = await supabase
         .from('accounts')
         .select('mints_remaining')
         .eq('id', accountId)
         .single();
-    if (acc) {
-        await supabase
-            .from('accounts')
-            .update({ mints_remaining: acc.mints_remaining + amount })
-            .eq('id', accountId);
+    if (fetchError || !acc) {
+        return { previousBalance: null, newBalance: null, error: fetchError?.message ?? 'Account not found' };
     }
+    const previous = acc.mints_remaining;
+    const next = previous + amount;
+    const { error: updateError } = await supabase
+        .from('accounts')
+        .update({ mints_remaining: next })
+        .eq('id', accountId);
+    if (updateError) {
+        return { previousBalance: previous, newBalance: null, error: updateError.message };
+    }
+    return { previousBalance: previous, newBalance: next, error: null };
 }
 async function setLegacyPlan(accountId, enabled) {
     const supabase = getSupabase();
@@ -255,6 +267,76 @@ async function setLegacyPlan(accountId, enabled) {
         .from('accounts')
         .update({ legacy_plan: enabled })
         .eq('id', accountId);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Supabase JWT verification (for dashboard endpoints)
+// ─────────────────────────────────────────────────────────────────────────────
+async function verifySupabaseToken(token) {
+    const supabase = getSupabase();
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+        throw new Error('Invalid or expired authentication token');
+    }
+    return { id: user.id, email: user.email };
+}
+async function insertAccount(id, displayName) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('accounts')
+        .insert({
+        id,
+        display_name: displayName,
+        mints_remaining: 0,
+        total_minted: 0,
+        default_phase: 'new_moon',
+        legacy_plan: false,
+    })
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to create account: ${error?.message}`);
+    return data;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// API key management (dashboard endpoints)
+// ─────────────────────────────────────────────────────────────────────────────
+async function createApiKey(accountId, keyHash, keyPrefix) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('api_keys')
+        .insert({
+        account_id: accountId,
+        key_hash: keyHash,
+        key_prefix: keyPrefix,
+        environment: 'live',
+        revoked_at: null,
+    })
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to create API key: ${error?.message}`);
+    return data;
+}
+async function listApiKeys(accountId) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('api_keys')
+        .select('id, account_id, key_prefix, created_at, revoked_at')
+        .eq('account_id', accountId)
+        .is('revoked_at', null)
+        .order('created_at', { ascending: false });
+    if (error)
+        throw new Error(`Failed to list API keys: ${error.message}`);
+    return (data ?? []);
+}
+async function revokeApiKey(keyId) {
+    const supabase = getSupabase();
+    const { error } = await supabase
+        .from('api_keys')
+        .update({ revoked_at: new Date().toISOString() })
+        .eq('id', keyId);
+    if (error)
+        throw new Error(`Failed to revoke API key: ${error.message}`);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)

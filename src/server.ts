@@ -17,7 +17,7 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments } from './services/database.js';
 import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
 
@@ -627,6 +627,44 @@ app.get(
       legacy_plan: account.legacy_plan,
       created_at: account.created_at,
     });
+  }
+);
+
+// GET /api/export — download all moments as JSON or CSV
+app.get(
+  '/api/export',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const format = req.query.format === 'csv' ? 'csv' : 'json';
+    const moments = await getAllMoments(account.id);
+
+    if (format === 'csv') {
+      const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid', 'media_type', 'source_url', 'tags'];
+      const escape = (v: unknown) => {
+        const s = v == null ? '' : String(v);
+        return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const rows = moments.map((m) =>
+        [m.block_id, m.title, m.phase, m.category, m.timestamp, m.media_cid, m.media_type, m.source_url, (m.tags ?? []).join(';')]
+          .map(escape)
+          .join(',')
+      );
+      const csv = [headers.join(','), ...rows].join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="moments.csv"');
+      res.send(csv);
+    } else {
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Content-Disposition', 'attachment; filename="moments.json"');
+      res.send(JSON.stringify(moments, null, 2));
+    }
   }
 );
 

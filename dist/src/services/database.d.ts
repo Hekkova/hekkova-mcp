@@ -22,7 +22,19 @@ export declare function decrementMints(accountId: string): Promise<void>;
 export declare function incrementTotalMinted(accountId: string): Promise<void>;
 export declare function getAllMoments(accountId: string): Promise<Moment[]>;
 export declare function getAccount(accountId: string): Promise<Account | null>;
-export declare function addMintsToAccount(accountId: string, amount: number): Promise<void>;
+export declare function addMintsToAccount(accountId: string, amount: number): Promise<{
+    previousBalance: number | null;
+    newBalance: number | null;
+    error: string | null;
+}>;
 export declare function setLegacyPlan(accountId: string, enabled: boolean): Promise<void>;
+export declare function verifySupabaseToken(token: string): Promise<{
+    id: string;
+    email: string | undefined;
+}>;
+export declare function insertAccount(id: string, displayName: string): Promise<Account>;
+export declare function createApiKey(accountId: string, keyHash: string, keyPrefix: string): Promise<ApiKey>;
+export declare function listApiKeys(accountId: string): Promise<ApiKey[]>;
+export declare function revokeApiKey(keyId: string): Promise<void>;
 export declare function seedTestData(): Promise<void>;
 //# sourceMappingURL=database.d.ts.map

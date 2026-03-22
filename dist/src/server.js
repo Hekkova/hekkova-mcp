@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -21,6 +54,7 @@ const get_balance_js_1 = require("./tools/get-balance.js");
 const get_account_js_1 = require("./tools/get-account.js");
 const stripe_js_1 = require("./services/stripe.js");
 const database_js_1 = require("./services/database.js");
+const crypto = __importStar(require("crypto"));
 const generalLimits = new Map();
 const mintLimits = new Map();
 const WINDOW_MS = 60 * 1000; // 1 minute
@@ -314,10 +348,14 @@ app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json'
     try {
         if (event.type === 'checkout.session.completed') {
             const session = event.data.object;
+            console.log('[stripe] checkout.session.completed — full session metadata:', JSON.stringify(session.metadata));
+            console.log('[stripe] client_reference_id:', session.client_reference_id);
             const accountId = session.client_reference_id;
             const packId = session.metadata?.pack_id;
+            console.log('[stripe] resolved account_id:', accountId);
+            console.log('[stripe] resolved pack_id:', packId);
             if (!accountId || !packId) {
-                console.error('[stripe] Webhook missing account_id or pack_id in session metadata');
+                console.error('[stripe] Webhook missing account_id or pack_id — aborting');
                 res.status(400).json({ error: 'Missing metadata' });
                 return;
             }
@@ -332,8 +370,11 @@ app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json'
                 console.log(`[stripe] Legacy plan activated for account ${accountId}`);
             }
             else {
-                await (0, database_js_1.addMintsToAccount)(accountId, pack.mintsAdded);
-                console.log(`[stripe] Added ${pack.mintsAdded} mints to account ${accountId} (pack: ${packId})`);
+                const result = await (0, database_js_1.addMintsToAccount)(accountId, pack.mintsAdded);
+                console.log(`[stripe] addMintsToAccount result for account ${accountId} (pack: ${packId}):`, JSON.stringify(result));
+                if (result.error) {
+                    console.error(`[stripe] Failed to add mints — error: ${result.error}`);
+                }
             }
         }
         res.json({ received: true });
@@ -350,15 +391,27 @@ app.get('/health', (_req, res) => {
 });
 // ── Billing: create checkout session ───────────────────────────────────────
 app.post('/api/checkout', async (req, res) => {
-    const { pack_id, account_id } = req.body;
-    if (!pack_id || !account_id) {
-        res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id and account_id are required' });
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
         return;
     }
+    console.log('[checkout] request body:', JSON.stringify(req.body));
+    const { pack_id } = req.body;
+    if (!pack_id) {
+        console.error('[checkout] 400 — pack_id missing from request body');
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'pack_id is required' });
+        return;
+    }
+    const account_id = account.id;
     const pack = stripe_js_1.MINT_PACKS[pack_id];
     if (!pack) {
         const validPacks = Object.keys(stripe_js_1.MINT_PACKS).join(', ');
-        res.status(400).json({ error: 'INVALID_PACK', message: `Unknown pack_id. Valid options: ${validPacks}` });
+        console.error(`[checkout] 400 — received pack_id "${pack_id}", not in [${validPacks}]`);
+        res.status(400).json({ error: 'INVALID_PACK', message: `Unknown pack_id "${pack_id}". Valid options: ${validPacks}` });
         return;
     }
     try {
@@ -369,6 +422,158 @@ app.post('/api/checkout', async (req, res) => {
         const e = err;
         console.error('[stripe] Failed to create checkout session:', e.message);
         res.status(500).json({ error: 'STRIPE_ERROR', message: 'Failed to create checkout session' });
+    }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+// API key management (dashboard endpoints — auth via Supabase JWT)
+// ─────────────────────────────────────────────────────────────────────────────
+const APIKEY_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+function generateApiKey() {
+    const bytes = crypto.randomBytes(32);
+    let randomPart = '';
+    for (let i = 0; i < 32; i++) {
+        randomPart += APIKEY_CHARS[bytes[i] % APIKEY_CHARS.length];
+    }
+    const fullKey = `hk_live_${randomPart}`;
+    const prefix = fullKey.slice(0, 16); // "hk_live_XXXXXXXX" — enough to identify without revealing
+    const hash = crypto.createHash('sha256').update(fullKey).digest('hex');
+    return { fullKey, prefix, hash };
+}
+async function requireSupabaseAuth(authHeader) {
+    if (!authHeader?.startsWith('Bearer ')) {
+        throw Object.assign(new Error('Missing or invalid Authorization header'), { status: 401 });
+    }
+    const token = authHeader.slice('Bearer '.length).trim();
+    const { id: userId, email } = await (0, database_js_1.verifySupabaseToken)(token);
+    const existing = await (0, database_js_1.getAccount)(userId);
+    if (existing)
+        return existing;
+    // First login — provision an account row for this Supabase user
+    const displayName = email ? email.split('@')[0] : userId.slice(0, 8);
+    return (0, database_js_1.insertAccount)(userId, displayName);
+}
+// POST /api/keys — generate a new API key for the authenticated account
+app.post('/api/keys', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    try {
+        const { fullKey, prefix, hash } = generateApiKey();
+        await (0, database_js_1.createApiKey)(account.id, hash, prefix);
+        res.status(201).json({ key: fullKey });
+    }
+    catch (err) {
+        const e = err;
+        console.error('[api/keys] Failed to create key:', e.message);
+        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to create API key' });
+    }
+});
+// GET /api/keys — list non-revoked keys for the authenticated account
+app.get('/api/keys', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    try {
+        const keys = await (0, database_js_1.listApiKeys)(account.id);
+        res.json({
+            keys: keys.map((k) => ({
+                id: k.id,
+                prefix: k.key_prefix,
+                created_at: k.created_at,
+            })),
+        });
+    }
+    catch (err) {
+        const e = err;
+        console.error('[api/keys] Failed to list keys:', e.message);
+        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to list API keys' });
+    }
+});
+// DELETE /api/keys/:id — revoke a key
+app.delete('/api/keys/:id', async (req, res) => {
+    try {
+        await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    const id = req.params['id'];
+    if (!id) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'Key ID is required' });
+        return;
+    }
+    try {
+        await (0, database_js_1.revokeApiKey)(id);
+        res.json({ revoked: true });
+    }
+    catch (err) {
+        const e = err;
+        console.error('[api/keys] Failed to revoke key:', e.message);
+        res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to revoke API key' });
+    }
+});
+// GET /api/account — return the authenticated user's account details
+app.get('/api/account', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    res.json({
+        id: account.id,
+        display_name: account.display_name,
+        light_id: account.light_id,
+        mints_remaining: account.mints_remaining,
+        total_minted: account.total_minted,
+        default_phase: account.default_phase,
+        legacy_plan: account.legacy_plan,
+        created_at: account.created_at,
+    });
+});
+// GET /api/export — download all moments as JSON or CSV
+app.get('/api/export', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    const format = req.query.format === 'csv' ? 'csv' : 'json';
+    const moments = await (0, database_js_1.getAllMoments)(account.id);
+    if (format === 'csv') {
+        const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid', 'media_type', 'source_url', 'tags'];
+        const escape = (v) => {
+            const s = v == null ? '' : String(v);
+            return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const rows = moments.map((m) => [m.block_id, m.title, m.phase, m.category, m.timestamp, m.media_cid, m.media_type, m.source_url, (m.tags ?? []).join(';')]
+            .map(escape)
+            .join(','));
+        const csv = [headers.join(','), ...rows].join('\n');
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="moments.csv"');
+        res.send(csv);
+    }
+    else {
+        res.setHeader('Content-Type', 'application/json');
+        res.setHeader('Content-Disposition', 'attachment; filename="moments.json"');
+        res.send(JSON.stringify(moments, null, 2));
     }
 });
 // ── MCP endpoint ───────────────────────────────────────────────────────────

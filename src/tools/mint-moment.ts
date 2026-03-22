@@ -59,7 +59,16 @@ export async function executeMint(
 ): Promise<MintResult> {
   const { account } = accountContext;
 
-  // 1. Validate eclipse_reveal_date requirement
+  // 1. Validate eclipse is Legacy Plan only
+  if (input.category === 'eclipse' && !account.legacy_plan) {
+    const err = new Error(
+      'Eclipse time-locked moments are a Legacy Plan feature. Upgrade at https://hekkova.com/dashboard/billing'
+    ) as Error & { code: string };
+    err.code = 'ECLIPSE_REQUIRES_LEGACY';
+    throw err;
+  }
+
+  // 2. Validate eclipse_reveal_date requirement
   if (input.category === 'eclipse' && !input.eclipse_reveal_date) {
     const err = new Error(
       'Eclipse category requires eclipse_reveal_date parameter'

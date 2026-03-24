@@ -21,9 +21,9 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "stripe": "^20.4.1",
-    "thirdweb": "^5.119.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
+    "viem": "^2.47.6",
     "zod": "^3.24.2"
   },
   "devDependencies": {

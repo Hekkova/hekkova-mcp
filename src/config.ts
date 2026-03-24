@@ -32,7 +32,7 @@ export const config = {
   thirdwebSecretKey: required('THIRDWEB_SECRET_KEY'),
   serverWalletPrivateKey: required('SERVER_WALLET_PRIVATE_KEY'),
   hekkovaContractAddress: required('HEKKOVA_CONTRACT_ADDRESS'),
-  polygonRpcUrl: optional('POLYGON_RPC_URL', 'https://polygon-rpc.com'),
+  polygonRpcUrl: optional('POLYGON_RPC_URL', 'https://polygon.llamarpc.com'),
 
   // ── Pinata (IPFS) ─────────────────────────────────────────────────────────
   pinataJwt: required('PINATA_JWT'),

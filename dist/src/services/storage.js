@@ -1,124 +1,118 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.pinMedia = pinMedia;
 exports.pinMetadata = pinMetadata;
 exports.pinJson = pinJson;
 exports.generateExportUrl = generateExportUrl;
-const crypto = __importStar(require("crypto"));
+const config_js_1 = require("../config.js");
 // ─────────────────────────────────────────────────────────────────────────────
-// Hekkova MCP Server — Storage Service (STUB)
-//
-// All functions return realistic fake IPFS CIDs and URLs.
-// TODO: Replace with real Pinata implementation
+// Hekkova MCP Server — Storage Service (Pinata / IPFS)
 // ─────────────────────────────────────────────────────────────────────────────
+const PINATA_BASE = 'https://api.pinata.cloud';
+function pinataHeaders() {
+    return {
+        pinata_api_key: config_js_1.config.pinataApiKey,
+        pinata_secret_api_key: config_js_1.config.pinataSecretKey,
+    };
+}
+function storageError() {
+    const err = new Error('STORAGE_ERROR: Failed to pin content to IPFS. Please try again.');
+    err.code = 'STORAGE_ERROR';
+    return err;
+}
 /**
  * Pin a media file (base64-encoded) to IPFS via Pinata.
- * Returns an IPFS CID starting with Qm.
- *
- * TODO: Replace with real Pinata implementation
- * - POST to https://api.pinata.cloud/pinning/pinFileToIPFS
- * - Include Authorization: Bearer <PINATA_JWT> header
- * - Send the decoded media buffer as multipart/form-data
- * - Return response.IpfsHash
+ * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
 async function pinMedia(mediaBase64, mediaType, fileName) {
-    // TODO: Replace with real Pinata implementation
-    void mediaBase64;
-    void mediaType;
-    void fileName;
-    await simulateLatency(150, 350);
-    return fakeCid();
+    const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+    const buffer = Buffer.from(raw, 'base64');
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
+    let response;
+    try {
+        response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+            method: 'POST',
+            headers: pinataHeaders(),
+            body: formData,
+        });
+    }
+    catch (err) {
+        console.error('[storage] Pinata pinFileToIPFS network error:', err);
+        throw storageError();
+    }
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        console.error(`[storage] Pinata pinFileToIPFS failed: ${response.status} ${text}`);
+        throw storageError();
+    }
+    const data = (await response.json());
+    return data.IpfsHash;
 }
 /**
  * Pin a metadata JSON object to IPFS via Pinata.
- * Returns an IPFS CID starting with Qm.
- *
- * TODO: Replace with real Pinata implementation
- * - POST to https://api.pinata.cloud/pinning/pinJSONToIPFS
- * - Include Authorization: Bearer <PINATA_JWT> header
- * - Send { pinataContent: metadata } as JSON body
- * - Return response.IpfsHash
+ * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
 async function pinMetadata(metadata) {
-    // TODO: Replace with real Pinata implementation
-    void metadata;
-    await simulateLatency(100, 250);
-    return fakeCid();
+    let response;
+    try {
+        response = await fetch(`${PINATA_BASE}/pinning/pinJSONToIPFS`, {
+            method: 'POST',
+            headers: {
+                ...pinataHeaders(),
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ pinataContent: metadata }),
+        });
+    }
+    catch (err) {
+        console.error('[storage] Pinata pinJSONToIPFS network error:', err);
+        throw storageError();
+    }
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        console.error(`[storage] Pinata pinJSONToIPFS failed: ${response.status} ${text}`);
+        throw storageError();
+    }
+    const data = (await response.json());
+    return data.IpfsHash;
 }
 /**
  * Pin a generic JSON object to IPFS via Pinata.
- * Returns an IPFS CID starting with Qm.
- *
- * TODO: Replace with real Pinata implementation
+ * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
 async function pinJson(data) {
-    // TODO: Replace with real Pinata implementation
-    void data;
-    await simulateLatency(100, 200);
-    return fakeCid();
+    return pinMetadata(data);
 }
 /**
- * Generate a temporary signed export URL for a data payload.
- *
- * TODO: Replace with real Pinata implementation
- * - Pin the data to IPFS
- * - Generate a pre-signed gateway URL with 24h expiry via Pinata
- * - Or upload to Supabase Storage and return a signed URL
+ * Pin an export payload to IPFS via Pinata and return a public gateway URL.
+ * The URL is permanent and verifiable on any IPFS gateway.
  */
 async function generateExportUrl(data, format) {
-    // TODO: Replace with real Pinata / Supabase Storage implementation
-    void data;
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    return `https://hekkova.com/exports/hk_export_${timestamp}.${format}`;
-}
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-/** Generate a realistic-looking IPFS CIDv0 (Qm + 44 alphanumeric characters). */
-function fakeCid() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz123456789';
-    let result = 'Qm';
-    const bytes = crypto.randomBytes(44);
-    for (let i = 0; i < 44; i++) {
-        result += chars[bytes[i] % chars.length];
+    const fileName = `hk_export_${timestamp}.${format}`;
+    const mediaType = format === 'json' ? 'application/json' : 'text/csv';
+    const buffer = Buffer.from(data, 'utf-8');
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
+    let response;
+    try {
+        response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+            method: 'POST',
+            headers: pinataHeaders(),
+            body: formData,
+        });
     }
-    return result;
-}
-function simulateLatency(minMs, maxMs) {
-    const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    catch (err) {
+        console.error('[storage] Pinata export pin network error:', err);
+        throw storageError();
+    }
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        console.error(`[storage] Pinata export pin failed: ${response.status} ${text}`);
+        throw storageError();
+    }
+    const result = (await response.json());
+    return `${config_js_1.config.pinataGateway}/ipfs/${result.IpfsHash}`;
 }
 //# sourceMappingURL=storage.js.map

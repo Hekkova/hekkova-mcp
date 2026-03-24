@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getAllMoments } from '../services/database.js';
 import { generateExportUrl } from '../services/storage.js';
+import { config } from '../config.js';
 import type { AccountContext, Moment } from '../types/index.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,7 +28,7 @@ function escapeCsvField(value: string | number | boolean | null | undefined): st
 }
 
 function momentsToCsv(moments: Moment[]): string {
-  const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid'];
+  const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid', 'metadata_cid', 'media_url', 'metadata_url'];
   const rows = moments.map((m) =>
     [
       escapeCsvField(m.block_id),
@@ -36,6 +37,9 @@ function momentsToCsv(moments: Moment[]): string {
       escapeCsvField(m.category),
       escapeCsvField(m.timestamp),
       escapeCsvField(m.media_cid),
+      escapeCsvField(m.metadata_cid),
+      escapeCsvField(`${config.pinataGateway}/ipfs/${m.media_cid}`),
+      escapeCsvField(`${config.pinataGateway}/ipfs/${m.metadata_cid}`),
     ].join(',')
   );
   return [headers.join(','), ...rows].join('\n');
@@ -49,7 +53,7 @@ interface ExportMomentsResponse {
   download_url: string;
   format: 'json' | 'csv';
   moment_count: number;
-  expires_in: string;
+  ipfs_gateway: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +95,6 @@ export async function handleExportMoments(
     download_url: downloadUrl,
     format,
     moment_count: moments.length,
-    expires_in: '24h',
+    ipfs_gateway: config.pinataGateway,
   };
 }

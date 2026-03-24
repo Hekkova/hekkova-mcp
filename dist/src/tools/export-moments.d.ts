@@ -12,7 +12,7 @@ interface ExportMomentsResponse {
     download_url: string;
     format: 'json' | 'csv';
     moment_count: number;
-    expires_in: string;
+    ipfs_gateway: string;
 }
 export declare function handleExportMoments(rawInput: unknown, accountContext: AccountContext): Promise<ExportMomentsResponse>;
 export {};

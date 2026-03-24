@@ -5,6 +5,7 @@ exports.handleExportMoments = handleExportMoments;
 const zod_1 = require("zod");
 const database_js_1 = require("../services/database.js");
 const storage_js_1 = require("../services/storage.js");
+const config_js_1 = require("../config.js");
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -24,7 +25,7 @@ function escapeCsvField(value) {
     return str;
 }
 function momentsToCsv(moments) {
-    const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid'];
+    const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid', 'metadata_cid', 'media_url', 'metadata_url'];
     const rows = moments.map((m) => [
         escapeCsvField(m.block_id),
         escapeCsvField(m.title),
@@ -32,6 +33,9 @@ function momentsToCsv(moments) {
         escapeCsvField(m.category),
         escapeCsvField(m.timestamp),
         escapeCsvField(m.media_cid),
+        escapeCsvField(m.metadata_cid),
+        escapeCsvField(`${config_js_1.config.pinataGateway}/ipfs/${m.media_cid}`),
+        escapeCsvField(`${config_js_1.config.pinataGateway}/ipfs/${m.metadata_cid}`),
     ].join(','));
     return [headers.join(','), ...rows].join('\n');
 }
@@ -61,7 +65,7 @@ async function handleExportMoments(rawInput, accountContext) {
         download_url: downloadUrl,
         format,
         moment_count: moments.length,
-        expires_in: '24h',
+        ipfs_gateway: config_js_1.config.pinataGateway,
     };
 }
 //# sourceMappingURL=export-moments.js.map

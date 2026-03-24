@@ -1,103 +1,135 @@
-import * as crypto from 'crypto';
+import { config } from '../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hekkova MCP Server — Storage Service (STUB)
-//
-// All functions return realistic fake IPFS CIDs and URLs.
-// TODO: Replace with real Pinata implementation
+// Hekkova MCP Server — Storage Service (Pinata / IPFS)
 // ─────────────────────────────────────────────────────────────────────────────
+
+const PINATA_BASE = 'https://api.pinata.cloud';
+
+function pinataHeaders(): Record<string, string> {
+  return {
+    pinata_api_key: config.pinataApiKey,
+    pinata_secret_api_key: config.pinataSecretKey,
+  };
+}
+
+function storageError(): Error & { code: string } {
+  const err = new Error(
+    'STORAGE_ERROR: Failed to pin content to IPFS. Please try again.'
+  ) as Error & { code: string };
+  err.code = 'STORAGE_ERROR';
+  return err;
+}
 
 /**
  * Pin a media file (base64-encoded) to IPFS via Pinata.
- * Returns an IPFS CID starting with Qm.
- *
- * TODO: Replace with real Pinata implementation
- * - POST to https://api.pinata.cloud/pinning/pinFileToIPFS
- * - Include Authorization: Bearer <PINATA_JWT> header
- * - Send the decoded media buffer as multipart/form-data
- * - Return response.IpfsHash
+ * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
 export async function pinMedia(
   mediaBase64: string,
   mediaType: string,
   fileName: string
 ): Promise<string> {
-  // TODO: Replace with real Pinata implementation
-  void mediaBase64;
-  void mediaType;
-  void fileName;
+  const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+  const buffer = Buffer.from(raw, 'base64');
 
-  await simulateLatency(150, 350);
-  return fakeCid();
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
+
+  let response: Response;
+  try {
+    response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+      method: 'POST',
+      headers: pinataHeaders(),
+      body: formData,
+    });
+  } catch (err) {
+    console.error('[storage] Pinata pinFileToIPFS network error:', err);
+    throw storageError();
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error(`[storage] Pinata pinFileToIPFS failed: ${response.status} ${text}`);
+    throw storageError();
+  }
+
+  const data = (await response.json()) as { IpfsHash: string };
+  return data.IpfsHash;
 }
 
 /**
  * Pin a metadata JSON object to IPFS via Pinata.
- * Returns an IPFS CID starting with Qm.
- *
- * TODO: Replace with real Pinata implementation
- * - POST to https://api.pinata.cloud/pinning/pinJSONToIPFS
- * - Include Authorization: Bearer <PINATA_JWT> header
- * - Send { pinataContent: metadata } as JSON body
- * - Return response.IpfsHash
+ * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
 export async function pinMetadata(metadata: object): Promise<string> {
-  // TODO: Replace with real Pinata implementation
-  void metadata;
+  let response: Response;
+  try {
+    response = await fetch(`${PINATA_BASE}/pinning/pinJSONToIPFS`, {
+      method: 'POST',
+      headers: {
+        ...pinataHeaders(),
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ pinataContent: metadata }),
+    });
+  } catch (err) {
+    console.error('[storage] Pinata pinJSONToIPFS network error:', err);
+    throw storageError();
+  }
 
-  await simulateLatency(100, 250);
-  return fakeCid();
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error(`[storage] Pinata pinJSONToIPFS failed: ${response.status} ${text}`);
+    throw storageError();
+  }
+
+  const data = (await response.json()) as { IpfsHash: string };
+  return data.IpfsHash;
 }
 
 /**
  * Pin a generic JSON object to IPFS via Pinata.
- * Returns an IPFS CID starting with Qm.
- *
- * TODO: Replace with real Pinata implementation
+ * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
 export async function pinJson(data: object): Promise<string> {
-  // TODO: Replace with real Pinata implementation
-  void data;
-
-  await simulateLatency(100, 200);
-  return fakeCid();
+  return pinMetadata(data);
 }
 
 /**
- * Generate a temporary signed export URL for a data payload.
- *
- * TODO: Replace with real Pinata implementation
- * - Pin the data to IPFS
- * - Generate a pre-signed gateway URL with 24h expiry via Pinata
- * - Or upload to Supabase Storage and return a signed URL
+ * Pin an export payload to IPFS via Pinata and return a public gateway URL.
+ * The URL is permanent and verifiable on any IPFS gateway.
  */
 export async function generateExportUrl(
   data: string,
   format: 'json' | 'csv'
 ): Promise<string> {
-  // TODO: Replace with real Pinata / Supabase Storage implementation
-  void data;
-
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  return `https://hekkova.com/exports/hk_export_${timestamp}.${format}`;
-}
+  const fileName = `hk_export_${timestamp}.${format}`;
+  const mediaType = format === 'json' ? 'application/json' : 'text/csv';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
+  const buffer = Buffer.from(data, 'utf-8');
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
 
-/** Generate a realistic-looking IPFS CIDv0 (Qm + 44 alphanumeric characters). */
-function fakeCid(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz123456789';
-  let result = 'Qm';
-  const bytes = crypto.randomBytes(44);
-  for (let i = 0; i < 44; i++) {
-    result += chars[bytes[i] % chars.length];
+  let response: Response;
+  try {
+    response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+      method: 'POST',
+      headers: pinataHeaders(),
+      body: formData,
+    });
+  } catch (err) {
+    console.error('[storage] Pinata export pin network error:', err);
+    throw storageError();
   }
-  return result;
-}
 
-function simulateLatency(minMs: number, maxMs: number): Promise<void> {
-  const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error(`[storage] Pinata export pin failed: ${response.status} ${text}`);
+    throw storageError();
+  }
+
+  const result = (await response.json()) as { IpfsHash: string };
+  return `${config.pinataGateway}/ipfs/${result.IpfsHash}`;
 }

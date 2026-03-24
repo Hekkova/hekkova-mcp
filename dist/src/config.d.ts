@@ -9,8 +9,7 @@ export declare const config: {
     readonly thirdwebSecretKey: string;
     readonly hekkovaContractAddress: string;
     readonly polygonRpcUrl: string;
-    readonly pinataApiKey: string;
-    readonly pinataSecretKey: string;
+    readonly pinataJwt: string;
     readonly pinataGateway: string;
     readonly litNetwork: string;
     readonly stripeSecretKey: string;

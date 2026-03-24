@@ -8,8 +8,7 @@ const PINATA_BASE = 'https://api.pinata.cloud';
 
 function pinataHeaders(): Record<string, string> {
   return {
-    pinata_api_key: config.pinataApiKey,
-    pinata_secret_api_key: config.pinataSecretKey,
+    Authorization: `Bearer ${config.pinataJwt}`,
   };
 }
 

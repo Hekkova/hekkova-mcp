@@ -11,8 +11,7 @@ const config_js_1 = require("../config.js");
 const PINATA_BASE = 'https://api.pinata.cloud';
 function pinataHeaders() {
     return {
-        pinata_api_key: config_js_1.config.pinataApiKey,
-        pinata_secret_api_key: config_js_1.config.pinataSecretKey,
+        Authorization: `Bearer ${config_js_1.config.pinataJwt}`,
     };
 }
 function storageError() {

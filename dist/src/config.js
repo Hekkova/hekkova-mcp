@@ -30,8 +30,7 @@ exports.config = {
     hekkovaContractAddress: required('HEKKOVA_CONTRACT_ADDRESS'),
     polygonRpcUrl: optional('POLYGON_RPC_URL', 'https://polygon-rpc.com'),
     // ── Pinata (IPFS) ─────────────────────────────────────────────────────────
-    pinataApiKey: required('PINATA_API_KEY'),
-    pinataSecretKey: required('PINATA_SECRET_KEY'),
+    pinataJwt: required('PINATA_JWT'),
     pinataGateway: optional('PINATA_GATEWAY', 'https://gateway.pinata.cloud'),
     // ── Lit Protocol ─────────────────────────────────────────────────────────
     litNetwork: optional('LIT_NETWORK', 'cayenne'),

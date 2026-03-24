@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, parseAbi } from 'viem';
+import { createPublicClient, createWalletClient, getAddress, http, parseAbi } from 'viem';
 import { polygon } from 'viem/chains';
 import { privateKeyToAccount } from 'viem/accounts';
 import { config } from '../config.js';
@@ -34,13 +34,19 @@ export async function mintNFT(params) {
         transport,
     });
     const tokenURI = `ipfs://${params.metadataCid}`;
+    // Recipient: use the owner's wallet if set, otherwise fall back to the
+    // server wallet which holds NFTs on behalf of the owner.
+    const recipient = params.walletAddress
+        ? getAddress(params.walletAddress)
+        : account.address;
+    const contractAddress = getAddress(config.hekkovaContractAddress);
     let txHash;
     try {
         txHash = await walletClient.writeContract({
-            address: config.hekkovaContractAddress,
+            address: contractAddress,
             abi: CONTRACT_ABI,
             functionName: 'mintTo',
-            args: [params.walletAddress, tokenURI],
+            args: [recipient, tokenURI],
         });
     }
     catch (err) {

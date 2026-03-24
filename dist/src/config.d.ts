@@ -7,6 +7,7 @@ export declare const config: {
     readonly supabaseServiceKey: string;
     readonly thirdwebClientId: string;
     readonly thirdwebSecretKey: string;
+    readonly serverWalletPrivateKey: string;
     readonly hekkovaContractAddress: string;
     readonly polygonRpcUrl: string;
     readonly pinataJwt: string;

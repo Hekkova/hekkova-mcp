@@ -2,6 +2,7 @@
   "name": "hekkova-mcp",
   "version": "1.0.0",
   "description": "The permanent memory layer for AI agents — Hekkova MCP Server",
+  "type": "module",
   "main": "dist/src/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -20,6 +21,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "stripe": "^20.4.1",
+    "thirdweb": "^5.119.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.8.3",
     "zod": "^3.24.2"

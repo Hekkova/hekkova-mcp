@@ -1,21 +1,16 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.MintMomentInputSchema = void 0;
-exports.executeMint = executeMint;
-exports.handleMintMoment = handleMintMoment;
-const zod_1 = require("zod");
-const encryption_js_1 = require("../services/encryption.js");
-const storage_js_1 = require("../services/storage.js");
-const blockchain_js_1 = require("../services/blockchain.js");
-const database_js_1 = require("../services/database.js");
-const config_js_1 = require("../config.js");
+import { z } from 'zod';
+import { encryptForPhase, shouldEncrypt } from '../services/encryption.js';
+import { pinMedia, pinMetadata } from '../services/storage.js';
+import { mintNFT } from '../services/blockchain.js';
+import { decrementMints, incrementTotalMinted, insertMoment } from '../services/database.js';
+import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
-exports.MintMomentInputSchema = zod_1.z.object({
-    title: zod_1.z.string().max(200, 'Title must be 200 characters or fewer'),
-    media: zod_1.z.string().min(1, 'Media is required (base64-encoded content)'),
-    media_type: zod_1.z.enum([
+export const MintMomentInputSchema = z.object({
+    title: z.string().max(200, 'Title must be 200 characters or fewer'),
+    media: z.string().min(1, 'Media is required (base64-encoded content)'),
+    media_type: z.enum([
         'image/png',
         'image/jpeg',
         'image/gif',
@@ -24,15 +19,15 @@ exports.MintMomentInputSchema = zod_1.z.object({
         'audio/wav',
         'text/plain',
     ]),
-    phase: zod_1.z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).default('new_moon'),
-    category: zod_1.z
+    phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).default('new_moon'),
+    category: z
         .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
         .nullable()
         .default(null),
-    description: zod_1.z.string().max(2000).optional(),
-    timestamp: zod_1.z.string().optional(),
-    eclipse_reveal_date: zod_1.z.string().optional(),
-    tags: zod_1.z.array(zod_1.z.string()).max(20).optional(),
+    description: z.string().max(2000).optional(),
+    timestamp: z.string().optional(),
+    eclipse_reveal_date: z.string().optional(),
+    tags: z.array(z.string()).max(20).optional(),
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Max media size: 50 MB (base64 is ~4/3 the size of binary)
@@ -47,7 +42,7 @@ function base64DecodedSize(base64) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Core mint logic (shared by mint-moment and mint-from-url)
 // ─────────────────────────────────────────────────────────────────────────────
-async function executeMint(input, accountContext, overrides = {}) {
+export async function executeMint(input, accountContext, overrides = {}) {
     const { account } = accountContext;
     // 1. Validate eclipse is Legacy Plan only
     if (input.category === 'eclipse' && !account.legacy_plan) {
@@ -88,7 +83,7 @@ async function executeMint(input, accountContext, overrides = {}) {
     }
     // 4. Check mint balance
     if (account.mints_remaining <= 0) {
-        const err = new Error(`No mint credits remaining. Purchase more at ${config_js_1.config.purchaseUrl}`);
+        const err = new Error(`No mint credits remaining. Purchase more at ${config.purchaseUrl}`);
         err.code = 'INSUFFICIENT_BALANCE';
         throw err;
     }
@@ -97,8 +92,8 @@ async function executeMint(input, accountContext, overrides = {}) {
     let mediaToPin = input.media;
     let encrypted = false;
     let _accHash = '';
-    if ((0, encryption_js_1.shouldEncrypt)(phase)) {
-        const result = await (0, encryption_js_1.encryptForPhase)(input.media, phase, accountContext);
+    if (shouldEncrypt(phase)) {
+        const result = await encryptForPhase(input.media, phase, accountContext);
         mediaToPin = result.encryptedData;
         _accHash = result.accHash;
         encrypted = true;
@@ -106,7 +101,7 @@ async function executeMint(input, accountContext, overrides = {}) {
     // 6. Pin media to IPFS
     const ext = input.media_type.split('/')[1];
     const fileName = `${input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50)}.${ext}`;
-    const mediaCid = await (0, storage_js_1.pinMedia)(mediaToPin, input.media_type, fileName);
+    const mediaCid = await pinMedia(mediaToPin, input.media_type, fileName);
     // 7. Build metadata object (ERC-721 / OpenSea compatible)
     const timestamp = input.timestamp ?? new Date().toISOString();
     const metadata = {
@@ -140,18 +135,18 @@ async function executeMint(input, accountContext, overrides = {}) {
         },
     };
     // 8. Pin metadata to IPFS
-    const metadataCid = await (0, storage_js_1.pinMetadata)(metadata);
+    const metadataCid = await pinMetadata(metadata);
     // 9. Mint NFT on Polygon
-    const { tokenId, txHash, blockId } = await (0, blockchain_js_1.mintNFT)({
+    const { tokenId, txHash, blockId } = await mintNFT({
         metadataCid,
         accountId: account.id,
         walletAddress: account.wallet_address ?? '',
     });
     // 10. Update account counters
-    await (0, database_js_1.decrementMints)(account.id);
-    await (0, database_js_1.incrementTotalMinted)(account.id);
+    await decrementMints(account.id);
+    await incrementTotalMinted(account.id);
     // 11. Persist moment record
-    const moment = await (0, database_js_1.insertMoment)({
+    const moment = await insertMoment({
         account_id: account.id,
         block_id: blockId,
         token_id: tokenId,
@@ -193,8 +188,8 @@ async function executeMint(input, accountContext, overrides = {}) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
-async function handleMintMoment(rawInput, accountContext) {
-    const parsed = exports.MintMomentInputSchema.safeParse(rawInput);
+export async function handleMintMoment(rawInput, accountContext) {
+    const parsed = MintMomentInputSchema.safeParse(rawInput);
     if (!parsed.success) {
         const err = new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
         err.code = 'INVALID_INPUT';

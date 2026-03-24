@@ -1,11 +1,8 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleGetBalance = handleGetBalance;
-const config_js_1 = require("../config.js");
+import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
-async function handleGetBalance(_rawInput, accountContext) {
+export async function handleGetBalance(_rawInput, accountContext) {
     const { account } = accountContext;
     console.log(`[${new Date().toISOString()}] get_balance | account=${account.id}`);
     let plan;
@@ -27,7 +24,7 @@ async function handleGetBalance(_rawInput, accountContext) {
         plan,
         legacy_plan: account.legacy_plan,
         phase_shift_balance: phaseShiftBalance,
-        purchase_url: config_js_1.config.purchaseUrl,
+        purchase_url: config.purchaseUrl,
     };
 }
 //# sourceMappingURL=get-balance.js.map

@@ -1,7 +1,5 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-require("dotenv/config");
-const database_js_1 = require("../src/services/database.js");
+import 'dotenv/config';
+import { seedTestData } from '../src/services/database.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova MCP Server — Seed Script
 //
@@ -13,7 +11,7 @@ async function main() {
     console.log('─────────────────────────────────────────');
     console.log('Seeding test data into Supabase...\n');
     try {
-        await (0, database_js_1.seedTestData)();
+        await seedTestData();
         console.log('\nNext steps:');
         console.log('  1. Copy .env.example to .env and fill in your Supabase credentials');
         console.log('  2. Run: npm run dev');

@@ -1,7 +1,4 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.config = void 0;
-require("dotenv/config");
+import 'dotenv/config';
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova MCP Server — Centralised Configuration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,7 +13,7 @@ function required(key) {
 function optional(key, defaultValue) {
     return process.env[key] ?? defaultValue;
 }
-exports.config = {
+export const config = {
     // ── Server ────────────────────────────────────────────────────────────────
     port: parseInt(optional('PORT', '3000'), 10),
     nodeEnv: optional('NODE_ENV', 'development'),
@@ -27,6 +24,7 @@ exports.config = {
     // ── Thirdweb / Polygon ────────────────────────────────────────────────────
     thirdwebClientId: required('THIRDWEB_CLIENT_ID'),
     thirdwebSecretKey: required('THIRDWEB_SECRET_KEY'),
+    serverWalletPrivateKey: required('SERVER_WALLET_PRIVATE_KEY'),
     hekkovaContractAddress: required('HEKKOVA_CONTRACT_ADDRESS'),
     polygonRpcUrl: optional('POLYGON_RPC_URL', 'https://polygon-rpc.com'),
     // ── Pinata (IPFS) ─────────────────────────────────────────────────────────

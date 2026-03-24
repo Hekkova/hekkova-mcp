@@ -1,16 +1,12 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ExportMomentsInputSchema = void 0;
-exports.handleExportMoments = handleExportMoments;
-const zod_1 = require("zod");
-const database_js_1 = require("../services/database.js");
-const storage_js_1 = require("../services/storage.js");
-const config_js_1 = require("../config.js");
+import { z } from 'zod';
+import { getAllMoments } from '../services/database.js';
+import { generateExportUrl } from '../services/storage.js';
+import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
-exports.ExportMomentsInputSchema = zod_1.z.object({
-    format: zod_1.z.enum(['json', 'csv']).default('json'),
+export const ExportMomentsInputSchema = z.object({
+    format: z.enum(['json', 'csv']).default('json'),
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // CSV formatting
@@ -34,16 +30,16 @@ function momentsToCsv(moments) {
         escapeCsvField(m.timestamp),
         escapeCsvField(m.media_cid),
         escapeCsvField(m.metadata_cid),
-        escapeCsvField(`${config_js_1.config.pinataGateway}/ipfs/${m.media_cid}`),
-        escapeCsvField(`${config_js_1.config.pinataGateway}/ipfs/${m.metadata_cid}`),
+        escapeCsvField(`${config.pinataGateway}/ipfs/${m.media_cid}`),
+        escapeCsvField(`${config.pinataGateway}/ipfs/${m.metadata_cid}`),
     ].join(','));
     return [headers.join(','), ...rows].join('\n');
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
-async function handleExportMoments(rawInput, accountContext) {
-    const parsed = exports.ExportMomentsInputSchema.safeParse(rawInput ?? {});
+export async function handleExportMoments(rawInput, accountContext) {
+    const parsed = ExportMomentsInputSchema.safeParse(rawInput ?? {});
     if (!parsed.success) {
         const err = new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
         err.code = 'INVALID_INPUT';
@@ -52,7 +48,7 @@ async function handleExportMoments(rawInput, accountContext) {
     const { format } = parsed.data;
     const accountId = accountContext.account.id;
     console.log(`[${new Date().toISOString()}] export_moments | account=${accountId} | format=${format}`);
-    const moments = await (0, database_js_1.getAllMoments)(accountId);
+    const moments = await getAllMoments(accountId);
     let serialised;
     if (format === 'json') {
         serialised = JSON.stringify(moments, null, 2);
@@ -60,12 +56,12 @@ async function handleExportMoments(rawInput, accountContext) {
     else {
         serialised = momentsToCsv(moments);
     }
-    const downloadUrl = await (0, storage_js_1.generateExportUrl)(serialised, format);
+    const downloadUrl = await generateExportUrl(serialised, format);
     return {
         download_url: downloadUrl,
         format,
         moment_count: moments.length,
-        ipfs_gateway: config_js_1.config.pinataGateway,
+        ipfs_gateway: config.pinataGateway,
     };
 }
 //# sourceMappingURL=export-moments.js.map

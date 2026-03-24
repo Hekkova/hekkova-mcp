@@ -1,6 +1,5 @@
-"use strict";
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova MCP Server — Core Types
 // ─────────────────────────────────────────────────────────────────────────────
-Object.defineProperty(exports, "__esModule", { value: true });
+export {};
 //# sourceMappingURL=index.js.map

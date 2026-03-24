@@ -1,18 +1,14 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdatePhaseInputSchema = void 0;
-exports.handleUpdatePhase = handleUpdatePhase;
-const zod_1 = require("zod");
-const database_js_1 = require("../services/database.js");
-const encryption_js_1 = require("../services/encryption.js");
-const storage_js_1 = require("../services/storage.js");
-const config_js_1 = require("../config.js");
+import { z } from 'zod';
+import { getMomentByBlockId, updateMomentPhase } from '../services/database.js';
+import { encryptForPhase, shouldEncrypt } from '../services/encryption.js';
+import { pinMedia } from '../services/storage.js';
+import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
-exports.UpdatePhaseInputSchema = zod_1.z.object({
-    block_id: zod_1.z.string().min(1, 'block_id is required'),
-    new_phase: zod_1.z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']),
+export const UpdatePhaseInputSchema = z.object({
+    block_id: z.string().min(1, 'block_id is required'),
+    new_phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']),
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase tier classification
@@ -31,8 +27,8 @@ function isBoundaryCrossing(fromPhase, toPhase) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
-async function handleUpdatePhase(rawInput, accountContext) {
-    const parsed = exports.UpdatePhaseInputSchema.safeParse(rawInput);
+export async function handleUpdatePhase(rawInput, accountContext) {
+    const parsed = UpdatePhaseInputSchema.safeParse(rawInput);
     if (!parsed.success) {
         const err = new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
         err.code = 'INVALID_INPUT';
@@ -42,7 +38,7 @@ async function handleUpdatePhase(rawInput, accountContext) {
     const { account } = accountContext;
     console.log(`[${new Date().toISOString()}] update_phase | account=${account.id} | block_id=${block_id} | new_phase=${new_phase}`);
     // 1. Look up the moment
-    const moment = await (0, database_js_1.getMomentByBlockId)(block_id, account.id);
+    const moment = await getMomentByBlockId(block_id, account.id);
     if (!moment) {
         const err = new Error(`No moment found with block_id: ${block_id}`);
         err.code = 'INVALID_BLOCK_ID';
@@ -54,7 +50,7 @@ async function handleUpdatePhase(rawInput, accountContext) {
     const crossing = isBoundaryCrossing(previousPhase, targetPhase);
     if (crossing && !account.legacy_plan) {
         const err = new Error(`Changing between encrypted phases and Full Moon costs $0.49 (re-encryption required). ` +
-            `Purchase access at ${config_js_1.config.purchaseUrl}. Legacy Plan accounts can do this for free.`);
+            `Purchase access at ${config.purchaseUrl}. Legacy Plan accounts can do this for free.`);
         err.code = 'PHASE_SHIFT_PAYMENT_REQUIRED';
         throw err;
     }
@@ -66,20 +62,20 @@ async function handleUpdatePhase(rawInput, accountContext) {
         // In a real implementation this would decrypt from Lit and re-encrypt
         // with new access conditions (or strip encryption entirely for full_moon).
         // TODO: Replace with real re-encryption via Lit Protocol
-        if ((0, encryption_js_1.shouldEncrypt)(targetPhase)) {
-            const { encryptedData } = await (0, encryption_js_1.encryptForPhase)(moment.media_cid, // stub: we pass the CID as a stand-in for actual media
+        if (shouldEncrypt(targetPhase)) {
+            const { encryptedData } = await encryptForPhase(moment.media_cid, // stub: we pass the CID as a stand-in for actual media
             targetPhase, accountContext);
-            newMediaCid = await (0, storage_js_1.pinMedia)(encryptedData, moment.media_type, `re_encrypted_${block_id}`);
+            newMediaCid = await pinMedia(encryptedData, moment.media_type, `re_encrypted_${block_id}`);
         }
         else {
             // Decrypting to public — for the stub we just return a new fake CID
-            newMediaCid = await (0, storage_js_1.pinMedia)(moment.media_cid, // stub
+            newMediaCid = await pinMedia(moment.media_cid, // stub
             moment.media_type, `decrypted_${block_id}`);
         }
         reEncrypted = true;
     }
     // 4. Update the phase in the database
-    await (0, database_js_1.updateMomentPhase)(block_id, account.id, targetPhase);
+    await updateMomentPhase(block_id, account.id, targetPhase);
     let feeCharged = 0.0;
     let message;
     if (account.legacy_plan) {

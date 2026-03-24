@@ -1,10 +1,7 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.handleGetAccount = handleGetAccount;
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
-async function handleGetAccount(_rawInput, accountContext) {
+export async function handleGetAccount(_rawInput, accountContext) {
     const { account } = accountContext;
     console.log(`[${new Date().toISOString()}] get_account | account=${account.id}`);
     return {

@@ -1,84 +1,26 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.hashKey = hashKey;
-exports.getAccountByKeyHash = getAccountByKeyHash;
-exports.getMomentByBlockId = getMomentByBlockId;
-exports.listMoments = listMoments;
-exports.insertMoment = insertMoment;
-exports.updateMomentPhase = updateMomentPhase;
-exports.decrementMints = decrementMints;
-exports.incrementTotalMinted = incrementTotalMinted;
-exports.getAllMoments = getAllMoments;
-exports.getAccount = getAccount;
-exports.updateAccount = updateAccount;
-exports.addMintsToAccount = addMintsToAccount;
-exports.setLegacyPlan = setLegacyPlan;
-exports.verifySupabaseToken = verifySupabaseToken;
-exports.insertAccount = insertAccount;
-exports.createApiKey = createApiKey;
-exports.listApiKeys = listApiKeys;
-exports.revokeApiKey = revokeApiKey;
-exports.addHeir = addHeir;
-exports.listHeirs = listHeirs;
-exports.updateHeirAccessLevel = updateHeirAccessLevel;
-exports.revokeHeir = revokeHeir;
-exports.seedTestData = seedTestData;
-const supabase_js_1 = require("@supabase/supabase-js");
-const crypto = __importStar(require("crypto"));
-const config_js_1 = require("../config.js");
+import { createClient } from '@supabase/supabase-js';
+import * as crypto from 'crypto';
+import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase client (service role — full access, used server-side only)
 // ─────────────────────────────────────────────────────────────────────────────
 let _supabase = null;
 function getSupabase() {
     if (!_supabase) {
-        _supabase = (0, supabase_js_1.createClient)(config_js_1.config.supabaseUrl || 'http://localhost:54321', config_js_1.config.supabaseServiceKey || 'service_role_placeholder');
+        _supabase = createClient(config.supabaseUrl || 'http://localhost:54321', config.supabaseServiceKey || 'service_role_placeholder');
     }
     return _supabase;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: SHA-256 hex hash
 // ─────────────────────────────────────────────────────────────────────────────
-function hashKey(key) {
+export function hashKey(key) {
     return crypto.createHash('sha256').update(key).digest('hex');
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Auth lookup
 // ─────────────────────────────────────────────────────────────────────────────
-async function getAccountByKeyHash(keyHash) {
+export async function getAccountByKeyHash(keyHash) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('api_keys')
@@ -126,7 +68,7 @@ async function getAccountByKeyHash(keyHash) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Moment queries
 // ─────────────────────────────────────────────────────────────────────────────
-async function getMomentByBlockId(blockId, accountId) {
+export async function getMomentByBlockId(blockId, accountId) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('moments')
@@ -138,7 +80,7 @@ async function getMomentByBlockId(blockId, accountId) {
         return null;
     return data;
 }
-async function listMoments(accountId, opts) {
+export async function listMoments(accountId, opts) {
     const supabase = getSupabase();
     let query = supabase
         .from('moments')
@@ -173,7 +115,7 @@ async function listMoments(accountId, opts) {
         total: count ?? 0,
     };
 }
-async function insertMoment(moment) {
+export async function insertMoment(moment) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('moments')
@@ -184,7 +126,7 @@ async function insertMoment(moment) {
         throw new Error(`Failed to insert moment: ${error?.message}`);
     return data;
 }
-async function updateMomentPhase(blockId, accountId, newPhase) {
+export async function updateMomentPhase(blockId, accountId, newPhase) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('moments')
@@ -197,7 +139,7 @@ async function updateMomentPhase(blockId, accountId, newPhase) {
         throw new Error(`Failed to update moment phase: ${error?.message}`);
     return data;
 }
-async function decrementMints(accountId) {
+export async function decrementMints(accountId) {
     const supabase = getSupabase();
     const { error } = await supabase.rpc('decrement_mints', { account_id: accountId });
     if (error) {
@@ -215,7 +157,7 @@ async function decrementMints(accountId) {
         }
     }
 }
-async function incrementTotalMinted(accountId) {
+export async function incrementTotalMinted(accountId) {
     const supabase = getSupabase();
     const { error } = await supabase.rpc('increment_total_minted', { account_id: accountId });
     if (error) {
@@ -233,7 +175,7 @@ async function incrementTotalMinted(accountId) {
         }
     }
 }
-async function getAllMoments(accountId) {
+export async function getAllMoments(accountId) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('moments')
@@ -244,7 +186,7 @@ async function getAllMoments(accountId) {
         throw new Error(`Failed to get all moments: ${error.message}`);
     return (data ?? []);
 }
-async function getAccount(accountId) {
+export async function getAccount(accountId) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('accounts')
@@ -255,7 +197,7 @@ async function getAccount(accountId) {
         return null;
     return data;
 }
-async function updateAccount(accountId, fields) {
+export async function updateAccount(accountId, fields) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('accounts')
@@ -267,7 +209,7 @@ async function updateAccount(accountId, fields) {
         throw new Error(`Failed to update account: ${error?.message}`);
     return data;
 }
-async function addMintsToAccount(accountId, amount) {
+export async function addMintsToAccount(accountId, amount) {
     const supabase = getSupabase();
     const { data: acc, error: fetchError } = await supabase
         .from('accounts')
@@ -288,7 +230,7 @@ async function addMintsToAccount(accountId, amount) {
     }
     return { previousBalance: previous, newBalance: next, error: null };
 }
-async function setLegacyPlan(accountId, enabled) {
+export async function setLegacyPlan(accountId, enabled) {
     const supabase = getSupabase();
     await supabase
         .from('accounts')
@@ -298,7 +240,7 @@ async function setLegacyPlan(accountId, enabled) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase JWT verification (for dashboard endpoints)
 // ─────────────────────────────────────────────────────────────────────────────
-async function verifySupabaseToken(token) {
+export async function verifySupabaseToken(token) {
     const supabase = getSupabase();
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (error || !user) {
@@ -306,7 +248,7 @@ async function verifySupabaseToken(token) {
     }
     return { id: user.id, email: user.email };
 }
-async function insertAccount(id, displayName) {
+export async function insertAccount(id, displayName) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('accounts')
@@ -327,7 +269,7 @@ async function insertAccount(id, displayName) {
 // ─────────────────────────────────────────────────────────────────────────────
 // API key management (dashboard endpoints)
 // ─────────────────────────────────────────────────────────────────────────────
-async function createApiKey(accountId, keyHash, keyPrefix) {
+export async function createApiKey(accountId, keyHash, keyPrefix) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('api_keys')
@@ -344,7 +286,7 @@ async function createApiKey(accountId, keyHash, keyPrefix) {
         throw new Error(`Failed to create API key: ${error?.message}`);
     return data;
 }
-async function listApiKeys(accountId) {
+export async function listApiKeys(accountId) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('api_keys')
@@ -356,7 +298,7 @@ async function listApiKeys(accountId) {
         throw new Error(`Failed to list API keys: ${error.message}`);
     return (data ?? []);
 }
-async function revokeApiKey(keyId) {
+export async function revokeApiKey(keyId) {
     const supabase = getSupabase();
     const { error } = await supabase
         .from('api_keys')
@@ -373,7 +315,7 @@ function fakeWalletAddress() {
     const hex = Array.from({ length: 40 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
     return `0x${hex}`;
 }
-async function addHeir(accountId, heirEmail, heirName, accessLevel) {
+export async function addHeir(accountId, heirEmail, heirName, accessLevel) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('heirs')
@@ -392,7 +334,7 @@ async function addHeir(accountId, heirEmail, heirName, accessLevel) {
         throw new Error(`Failed to add heir: ${error?.message}`);
     return data;
 }
-async function listHeirs(accountId) {
+export async function listHeirs(accountId) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('heirs')
@@ -404,7 +346,7 @@ async function listHeirs(accountId) {
         throw new Error(`Failed to list heirs: ${error.message}`);
     return (data ?? []);
 }
-async function updateHeirAccessLevel(heirId, accountId, accessLevel) {
+export async function updateHeirAccessLevel(heirId, accountId, accessLevel) {
     const supabase = getSupabase();
     const { data, error } = await supabase
         .from('heirs')
@@ -417,7 +359,7 @@ async function updateHeirAccessLevel(heirId, accountId, accessLevel) {
         throw new Error(`Failed to update heir: ${error?.message}`);
     return data;
 }
-async function revokeHeir(heirId, accountId) {
+export async function revokeHeir(heirId, accountId) {
     const supabase = getSupabase();
     const { error } = await supabase
         .from('heirs')
@@ -430,7 +372,7 @@ async function revokeHeir(heirId, accountId) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)
 // ─────────────────────────────────────────────────────────────────────────────
-async function seedTestData() {
+export async function seedTestData() {
     const supabase = getSupabase();
     const TEST_ACCOUNT_ID = '00000000-0000-0000-0000-000000000001';
     const TEST_API_KEY = 'hk_test_local_dev_key_12345678';

@@ -1,60 +1,22 @@
-"use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-require("dotenv/config");
-const express_1 = __importDefault(require("express"));
-const cors_1 = __importDefault(require("cors"));
-const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
-const streamableHttp_js_1 = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
-const zod_1 = require("zod");
-const config_js_1 = require("./config.js");
-const auth_js_1 = require("./services/auth.js");
-const mint_moment_js_1 = require("./tools/mint-moment.js");
-const mint_from_url_js_1 = require("./tools/mint-from-url.js");
-const list_moments_js_1 = require("./tools/list-moments.js");
-const get_moment_js_1 = require("./tools/get-moment.js");
-const update_phase_js_1 = require("./tools/update-phase.js");
-const export_moments_js_1 = require("./tools/export-moments.js");
-const get_balance_js_1 = require("./tools/get-balance.js");
-const get_account_js_1 = require("./tools/get-account.js");
-const stripe_js_1 = require("./services/stripe.js");
-const database_js_1 = require("./services/database.js");
-const crypto = __importStar(require("crypto"));
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
+import { config } from './config.js';
+import { validateApiKey } from './services/auth.js';
+import { handleMintMoment } from './tools/mint-moment.js';
+import { handleMintFromUrl } from './tools/mint-from-url.js';
+import { handleListMoments } from './tools/list-moments.js';
+import { handleGetMoment } from './tools/get-moment.js';
+import { handleUpdatePhase } from './tools/update-phase.js';
+import { handleExportMoments } from './tools/export-moments.js';
+import { handleGetBalance } from './tools/get-balance.js';
+import { handleGetAccount } from './tools/get-account.js';
+import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir } from './services/database.js';
+import * as crypto from 'crypto';
 const generalLimits = new Map();
 const mintLimits = new Map();
 const WINDOW_MS = 60 * 1000; // 1 minute
@@ -135,34 +97,34 @@ let _currentRequest = null;
 // Build the MCP server
 // ─────────────────────────────────────────────────────────────────────────────
 function createMcpServer() {
-    const server = new mcp_js_1.McpServer({
+    const server = new McpServer({
         name: 'hekkova',
         version: '1.0.0',
         description: 'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored on IPFS (Filecoin archival coming soon).',
     });
     // ── mint_moment ────────────────────────────────────────────────────────────
     server.tool('mint_moment', 'Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID.', {
-        title: zod_1.z.string().max(200).describe('Name of the moment'),
-        media: zod_1.z.string().describe('Base64-encoded media content (photo, video, audio, or text). Max 50MB.'),
-        media_type: zod_1.z
+        title: z.string().max(200).describe('Name of the moment'),
+        media: z.string().describe('Base64-encoded media content (photo, video, audio, or text). Max 50MB.'),
+        media_type: z
             .enum(['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain'])
             .describe('MIME type of the media content'),
-        phase: zod_1.z
+        phase: z
             .enum(['new_moon', 'crescent', 'gibbous', 'full_moon'])
             .default('new_moon')
             .describe('Privacy phase. new_moon = owner only (encrypted), full_moon = fully public'),
-        category: zod_1.z
+        category: z
             .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
             .nullable()
             .default(null)
             .describe('Optional moment category'),
-        description: zod_1.z.string().max(2000).optional().describe('Optional description or context'),
-        timestamp: zod_1.z.string().optional().describe('ISO 8601 timestamp. Defaults to now.'),
-        eclipse_reveal_date: zod_1.z
+        description: z.string().max(2000).optional().describe('Optional description or context'),
+        timestamp: z.string().optional().describe('ISO 8601 timestamp. Defaults to now.'),
+        eclipse_reveal_date: z
             .string()
             .optional()
             .describe('Required if category is eclipse. Date/time when content can be decrypted.'),
-        tags: zod_1.z.array(zod_1.z.string()).max(20).optional().describe('Optional tags for organisation'),
+        tags: z.array(z.string()).max(20).optional().describe('Optional tags for organisation'),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -171,7 +133,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, mint_moment_js_1.handleMintMoment)(input, ctx);
+            const result = await handleMintMoment(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -181,14 +143,14 @@ function createMcpServer() {
     });
     // ── mint_from_url ──────────────────────────────────────────────────────────
     server.tool('mint_from_url', 'Mint a moment from a public URL. Hekkova fetches the content, extracts media and metadata, and mints it to the blockchain. Works with public social media posts, image URLs, and web pages.', {
-        url: zod_1.z.string().url().describe('Public URL to mint from.'),
-        title: zod_1.z.string().max(200).optional().describe('Override title. Hekkova extracts one if omitted.'),
-        phase: zod_1.z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).default('new_moon'),
-        category: zod_1.z
+        url: z.string().url().describe('Public URL to mint from.'),
+        title: z.string().max(200).optional().describe('Override title. Hekkova extracts one if omitted.'),
+        phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).default('new_moon'),
+        category: z
             .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
             .nullable()
             .default(null),
-        tags: zod_1.z.array(zod_1.z.string()).max(20).optional(),
+        tags: z.array(z.string()).max(20).optional(),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -197,7 +159,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, mint_from_url_js_1.handleMintFromUrl)(input, ctx);
+            const result = await handleMintFromUrl(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -207,12 +169,12 @@ function createMcpServer() {
     });
     // ── list_moments ───────────────────────────────────────────────────────────
     server.tool('list_moments', 'List all minted moments for this account. Returns metadata, Block IDs, and phase/category info. Does not return decrypted media content.', {
-        limit: zod_1.z.number().int().min(1).max(100).default(20).describe('Number of moments to return'),
-        offset: zod_1.z.number().int().min(0).default(0).describe('Pagination offset'),
-        phase: zod_1.z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).optional().describe('Filter by privacy phase'),
-        category: zod_1.z.enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse']).optional().describe('Filter by category'),
-        search: zod_1.z.string().optional().describe('Search by title, description, or tags'),
-        sort: zod_1.z.enum(['newest', 'oldest']).default('newest'),
+        limit: z.number().int().min(1).max(100).default(20).describe('Number of moments to return'),
+        offset: z.number().int().min(0).default(0).describe('Pagination offset'),
+        phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).optional().describe('Filter by privacy phase'),
+        category: z.enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse']).optional().describe('Filter by category'),
+        search: z.string().optional().describe('Search by title, description, or tags'),
+        sort: z.enum(['newest', 'oldest']).default('newest'),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -221,7 +183,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, list_moments_js_1.handleListMoments)(input, ctx);
+            const result = await handleListMoments(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -231,7 +193,7 @@ function createMcpServer() {
     });
     // ── get_moment ─────────────────────────────────────────────────────────────
     server.tool('get_moment', 'Get full details for a single minted moment, including metadata, CIDs, and blockchain transaction info.', {
-        block_id: zod_1.z.string().describe("The Block ID of the moment (e.g., '0x4a7f2c9b1e83')"),
+        block_id: z.string().describe("The Block ID of the moment (e.g., '0x4a7f2c9b1e83')"),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -240,7 +202,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, get_moment_js_1.handleGetMoment)(input, ctx);
+            const result = await handleGetMoment(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -250,8 +212,8 @@ function createMcpServer() {
     });
     // ── update_phase ───────────────────────────────────────────────────────────
     server.tool('update_phase', 'Change the privacy phase of an existing moment. Free between encrypted tiers (New Moon, Crescent, Gibbous). Costs $0.49 when transitioning to/from Full Moon (re-encryption required). Free for Legacy Plan accounts.', {
-        block_id: zod_1.z.string().describe('Block ID of the moment to update'),
-        new_phase: zod_1.z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).describe('Target privacy phase'),
+        block_id: z.string().describe('Block ID of the moment to update'),
+        new_phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).describe('Target privacy phase'),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -260,7 +222,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, update_phase_js_1.handleUpdatePhase)(input, ctx);
+            const result = await handleUpdatePhase(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -270,7 +232,7 @@ function createMcpServer() {
     });
     // ── export_moments ─────────────────────────────────────────────────────────
     server.tool('export_moments', 'Export all minted moments as a downloadable JSON or CSV file. Includes Block IDs, CIDs, metadata, and timestamps.', {
-        format: zod_1.z.enum(['json', 'csv']).default('json').describe('Export format'),
+        format: z.enum(['json', 'csv']).default('json').describe('Export format'),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -279,7 +241,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, export_moments_js_1.handleExportMoments)(input, ctx);
+            const result = await handleExportMoments(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -296,7 +258,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, get_balance_js_1.handleGetBalance)(input, ctx);
+            const result = await handleGetBalance(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -313,7 +275,7 @@ function createMcpServer() {
         if (!ctx)
             throw new Error('Not authenticated');
         try {
-            const result = await (0, get_account_js_1.handleGetAccount)(input, ctx);
+            const result = await handleGetAccount(input, ctx);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         catch (err) {
@@ -326,10 +288,10 @@ function createMcpServer() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Express app
 // ─────────────────────────────────────────────────────────────────────────────
-const app = (0, express_1.default)();
-app.use((0, cors_1.default)());
+const app = express();
+app.use(cors());
 // ── Stripe webhook — must be registered before express.json() to get raw body
-app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json' }), async (req, res) => {
+app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
     const signature = req.headers['stripe-signature'];
     if (!signature || typeof signature !== 'string') {
         res.status(400).json({ error: 'Missing stripe-signature header' });
@@ -337,7 +299,7 @@ app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json'
     }
     let event;
     try {
-        event = (0, stripe_js_1.constructWebhookEvent)(req.body, signature, config_js_1.config.stripeWebhookSecret);
+        event = constructWebhookEvent(req.body, signature, config.stripeWebhookSecret);
     }
     catch (err) {
         const e = err;
@@ -359,18 +321,18 @@ app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json'
                 res.status(400).json({ error: 'Missing metadata' });
                 return;
             }
-            const pack = stripe_js_1.MINT_PACKS[packId];
+            const pack = MINT_PACKS[packId];
             if (!pack) {
                 console.error(`[stripe] Unknown pack_id: ${packId}`);
                 res.status(400).json({ error: 'Unknown pack' });
                 return;
             }
             if (pack.isLegacyPlan) {
-                await (0, database_js_1.setLegacyPlan)(accountId, true);
+                await setLegacyPlan(accountId, true);
                 console.log(`[stripe] Legacy plan activated for account ${accountId}`);
             }
             else {
-                const result = await (0, database_js_1.addMintsToAccount)(accountId, pack.mintsAdded);
+                const result = await addMintsToAccount(accountId, pack.mintsAdded);
                 console.log(`[stripe] addMintsToAccount result for account ${accountId} (pack: ${packId}):`, JSON.stringify(result));
                 if (result.error) {
                     console.error(`[stripe] Failed to add mints — error: ${result.error}`);
@@ -384,7 +346,7 @@ app.post('/api/webhook/stripe', express_1.default.raw({ type: 'application/json'
         res.status(500).json({ error: 'Webhook processing failed' });
     }
 });
-app.use(express_1.default.json({ limit: '100mb' })); // allow large base64 payloads
+app.use(express.json({ limit: '100mb' })); // allow large base64 payloads
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '1.0.0' });
@@ -407,15 +369,15 @@ app.post('/api/checkout', async (req, res) => {
         return;
     }
     const account_id = account.id;
-    const pack = stripe_js_1.MINT_PACKS[pack_id];
+    const pack = MINT_PACKS[pack_id];
     if (!pack) {
-        const validPacks = Object.keys(stripe_js_1.MINT_PACKS).join(', ');
+        const validPacks = Object.keys(MINT_PACKS).join(', ');
         console.error(`[checkout] 400 — received pack_id "${pack_id}", not in [${validPacks}]`);
         res.status(400).json({ error: 'INVALID_PACK', message: `Unknown pack_id "${pack_id}". Valid options: ${validPacks}` });
         return;
     }
     try {
-        const session = await (0, stripe_js_1.createCheckoutSession)(pack, account_id, 'https://app.hekkova.com/billing?payment=success', 'https://app.hekkova.com/billing?payment=cancelled');
+        const session = await createCheckoutSession(pack, account_id, 'https://app.hekkova.com/billing?payment=success', 'https://app.hekkova.com/billing?payment=cancelled');
         res.json({ url: session.url, session_id: session.id, pack });
     }
     catch (err) {
@@ -444,13 +406,13 @@ async function requireSupabaseAuth(authHeader) {
         throw Object.assign(new Error('Missing or invalid Authorization header'), { status: 401 });
     }
     const token = authHeader.slice('Bearer '.length).trim();
-    const { id: userId, email } = await (0, database_js_1.verifySupabaseToken)(token);
-    const existing = await (0, database_js_1.getAccount)(userId);
+    const { id: userId, email } = await verifySupabaseToken(token);
+    const existing = await getAccount(userId);
     if (existing)
         return existing;
     // First login — provision an account row for this Supabase user
     const displayName = email ? email.split('@')[0] : userId.slice(0, 8);
-    return (0, database_js_1.insertAccount)(userId, displayName);
+    return insertAccount(userId, displayName);
 }
 // POST /api/keys — generate a new API key for the authenticated account
 app.post('/api/keys', async (req, res) => {
@@ -464,7 +426,7 @@ app.post('/api/keys', async (req, res) => {
     }
     try {
         const { fullKey, prefix, hash } = generateApiKey();
-        await (0, database_js_1.createApiKey)(account.id, hash, prefix);
+        await createApiKey(account.id, hash, prefix);
         res.status(201).json({ key: fullKey });
     }
     catch (err) {
@@ -484,7 +446,7 @@ app.get('/api/keys', async (req, res) => {
         return;
     }
     try {
-        const keys = await (0, database_js_1.listApiKeys)(account.id);
+        const keys = await listApiKeys(account.id);
         res.json({
             keys: keys.map((k) => ({
                 id: k.id,
@@ -514,7 +476,7 @@ app.delete('/api/keys/:id', async (req, res) => {
         return;
     }
     try {
-        await (0, database_js_1.revokeApiKey)(id);
+        await revokeApiKey(id);
         res.json({ revoked: true });
     }
     catch (err) {
@@ -575,7 +537,7 @@ app.patch('/api/account', async (req, res) => {
         res.status(400).json({ error: 'BAD_REQUEST', message: 'Provide at least one of: display_name, default_phase' });
         return;
     }
-    const updated = await (0, database_js_1.updateAccount)(account.id, fields);
+    const updated = await updateAccount(account.id, fields);
     res.json({
         id: updated.id,
         display_name: updated.display_name,
@@ -615,7 +577,7 @@ app.post('/api/heirs', async (req, res) => {
         res.status(400).json({ error: 'BAD_REQUEST', message: 'access_level must be "full" or "read_only"' });
         return;
     }
-    const heir = await (0, database_js_1.addHeir)(account.id, heir_email.trim(), heir_name.trim(), access_level);
+    const heir = await addHeir(account.id, heir_email.trim(), heir_name.trim(), access_level);
     res.status(201).json(heir);
 });
 // GET /api/heirs — list non-revoked heirs for the account
@@ -628,7 +590,7 @@ app.get('/api/heirs', async (req, res) => {
         res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
         return;
     }
-    const heirs = await (0, database_js_1.listHeirs)(account.id);
+    const heirs = await listHeirs(account.id);
     res.json(heirs);
 });
 // PATCH /api/heirs/:id — update heir access level
@@ -647,7 +609,7 @@ app.patch('/api/heirs/:id', async (req, res) => {
         return;
     }
     try {
-        const heir = await (0, database_js_1.updateHeirAccessLevel)(String(req.params.id), account.id, access_level);
+        const heir = await updateHeirAccessLevel(String(req.params.id), account.id, access_level);
         res.json(heir);
     }
     catch {
@@ -665,7 +627,7 @@ app.delete('/api/heirs/:id', async (req, res) => {
         return;
     }
     try {
-        await (0, database_js_1.revokeHeir)(String(req.params.id), account.id);
+        await revokeHeir(String(req.params.id), account.id);
         res.status(204).send();
     }
     catch {
@@ -683,7 +645,7 @@ app.get('/api/export', async (req, res) => {
         return;
     }
     const format = req.query.format === 'csv' ? 'csv' : 'json';
-    const moments = await (0, database_js_1.getAllMoments)(account.id);
+    const moments = await getAllMoments(account.id);
     if (format === 'csv') {
         const headers = ['block_id', 'title', 'phase', 'category', 'timestamp', 'media_cid', 'media_type', 'source_url', 'tags'];
         const escape = (v) => {
@@ -710,7 +672,7 @@ app.post('/mcp', async (req, res, next) => {
     // 1. Allow tools/list unauthenticated so clients can discover all tools
     if (body?.method === 'tools/list') {
         const mcpServer = createMcpServer();
-        const transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
+        const transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: undefined,
         });
         res.on('close', () => {
@@ -729,7 +691,7 @@ app.post('/mcp', async (req, res, next) => {
     // 2. Authenticate all other requests
     let accountContext;
     try {
-        accountContext = await (0, auth_js_1.validateApiKey)(req.headers.authorization);
+        accountContext = await validateApiKey(req.headers.authorization);
     }
     catch (err) {
         const e = err;
@@ -770,7 +732,7 @@ app.post('/mcp', async (req, res, next) => {
     _currentRequest = req;
     // 5. Create a fresh MCP server + transport per request (stateless HTTP)
     const mcpServer = createMcpServer();
-    const transport = new streamableHttp_js_1.StreamableHTTPServerTransport({
+    const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless — no session IDs
     });
     res.on('close', () => {
@@ -802,12 +764,12 @@ app.use((err, _req, res, _next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Start
 // ─────────────────────────────────────────────────────────────────────────────
-app.listen(config_js_1.config.port, () => {
+app.listen(config.port, () => {
     console.log(`\n🌕 Hekkova MCP Server`);
     console.log(`   Version:  1.0.0`);
-    console.log(`   Env:      ${config_js_1.config.nodeEnv}`);
-    console.log(`   Endpoint: http://localhost:${config_js_1.config.port}/mcp`);
-    console.log(`   Health:   http://localhost:${config_js_1.config.port}/health\n`);
+    console.log(`   Env:      ${config.nodeEnv}`);
+    console.log(`   Endpoint: http://localhost:${config.port}/mcp`);
+    console.log(`   Health:   http://localhost:${config.port}/health\n`);
 });
-exports.default = app;
+export default app;
 //# sourceMappingURL=server.js.map

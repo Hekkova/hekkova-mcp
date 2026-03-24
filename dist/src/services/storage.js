@@ -1,17 +1,11 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.pinMedia = pinMedia;
-exports.pinMetadata = pinMetadata;
-exports.pinJson = pinJson;
-exports.generateExportUrl = generateExportUrl;
-const config_js_1 = require("../config.js");
+import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova MCP Server — Storage Service (Pinata / IPFS)
 // ─────────────────────────────────────────────────────────────────────────────
 const PINATA_BASE = 'https://api.pinata.cloud';
 function pinataHeaders() {
     return {
-        Authorization: `Bearer ${config_js_1.config.pinataJwt}`,
+        Authorization: `Bearer ${config.pinataJwt}`,
     };
 }
 function storageError() {
@@ -23,7 +17,7 @@ function storageError() {
  * Pin a media file (base64-encoded) to IPFS via Pinata.
  * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
-async function pinMedia(mediaBase64, mediaType, fileName) {
+export async function pinMedia(mediaBase64, mediaType, fileName) {
     const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
     const buffer = Buffer.from(raw, 'base64');
     const formData = new FormData();
@@ -52,7 +46,7 @@ async function pinMedia(mediaBase64, mediaType, fileName) {
  * Pin a metadata JSON object to IPFS via Pinata.
  * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
-async function pinMetadata(metadata) {
+export async function pinMetadata(metadata) {
     let response;
     try {
         response = await fetch(`${PINATA_BASE}/pinning/pinJSONToIPFS`, {
@@ -80,14 +74,14 @@ async function pinMetadata(metadata) {
  * Pin a generic JSON object to IPFS via Pinata.
  * Returns a real IPFS CID (IpfsHash) from Pinata.
  */
-async function pinJson(data) {
+export async function pinJson(data) {
     return pinMetadata(data);
 }
 /**
  * Pin an export payload to IPFS via Pinata and return a public gateway URL.
  * The URL is permanent and verifiable on any IPFS gateway.
  */
-async function generateExportUrl(data, format) {
+export async function generateExportUrl(data, format) {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const fileName = `hk_export_${timestamp}.${format}`;
     const mediaType = format === 'json' ? 'application/json' : 'text/csv';
@@ -112,6 +106,6 @@ async function generateExportUrl(data, format) {
         throw storageError();
     }
     const result = (await response.json());
-    return `${config_js_1.config.pinataGateway}/ipfs/${result.IpfsHash}`;
+    return `${config.pinataGateway}/ipfs/${result.IpfsHash}`;
 }
 //# sourceMappingURL=storage.js.map

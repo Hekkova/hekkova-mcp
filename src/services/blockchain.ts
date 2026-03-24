@@ -1,11 +1,30 @@
-import * as crypto from 'crypto';
+import {
+  createThirdwebClient,
+  getContract,
+  prepareContractCall,
+  sendTransaction,
+  waitForReceipt,
+} from 'thirdweb';
+import { defineChain } from 'thirdweb/chains';
+import { privateKeyToAccount } from 'thirdweb/wallets';
+import { config } from '../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hekkova MCP Server — Blockchain Service (STUB)
-//
-// All functions return realistic fake data.
-// TODO: Replace with real Thirdweb/Polygon implementation
+// Hekkova MCP Server — Blockchain Service (Thirdweb / Polygon)
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ERC-721 Transfer event topic: keccak256("Transfer(address,address,uint256)")
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+// Lazily initialised — reused across calls
+let _client: ReturnType<typeof createThirdwebClient> | null = null;
+
+function getClient() {
+  if (!_client) {
+    _client = createThirdwebClient({ secretKey: config.thirdwebSecretKey });
+  }
+  return _client;
+}
 
 interface MintNFTParams {
   metadataCid: string;
@@ -22,42 +41,93 @@ interface MintNFTResult {
 /**
  * Mint an ERC-721 NFT on Polygon via Thirdweb.
  *
- * TODO: Replace with real Thirdweb/Polygon implementation
- * - Import ThirdwebSDK from @thirdweb-dev/sdk
- * - Connect to the Polygon network using config.polygonRpcUrl
- * - Authenticate with config.thirdwebSecretKey
- * - Get the contract at config.hekkovaContractAddress
- * - Call contract.erc721.mintTo(walletAddress, { name, image: ipfs://metadataCid })
- * - Return the on-chain tokenId, txHash, and blockId
+ * The server wallet (SERVER_WALLET_PRIVATE_KEY) signs and pays gas.
+ * The NFT is minted to the owner's wallet address with the metadata URI
+ * pointing to the CID already pinned to IPFS via Pinata.
  */
 export async function mintNFT(params: MintNFTParams): Promise<MintNFTResult> {
-  // TODO: Replace with real Thirdweb/Polygon implementation
+  const client = getClient();
 
-  void params; // suppress unused warning in stub
+  const chain = defineChain({
+    id: 137, // Polygon mainnet
+    rpc: config.polygonRpcUrl,
+  });
 
-  // Simulate a realistic ~200ms blockchain call latency
-  await simulateLatency(200, 400);
+  const account = privateKeyToAccount({
+    client,
+    privateKey: config.serverWalletPrivateKey as `0x${string}`,
+  });
 
-  const tokenId = randomInt(1000, 9999);
-  const txHash = '0x' + randomHex(64);
-  const blockId = '0x' + randomHex(12);
+  const contract = getContract({
+    client,
+    chain,
+    address: config.hekkovaContractAddress,
+  });
+
+  const tokenURI = `ipfs://${params.metadataCid}`;
+
+  const transaction = prepareContractCall({
+    contract,
+    method: 'function mintTo(address _to, string _uri)',
+    params: [params.walletAddress as `0x${string}`, tokenURI],
+  });
+
+  let txHash: string;
+  let sendResult: Awaited<ReturnType<typeof sendTransaction>>;
+
+  try {
+    sendResult = await sendTransaction({ transaction, account });
+    txHash = sendResult.transactionHash;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message.toLowerCase() : '';
+    if (msg.includes('insufficient funds') || msg.includes('insufficient balance')) {
+      const e = new Error(
+        'MINT_FAILED: Insufficient gas funds. Please contact support.'
+      ) as Error & { code: string };
+      e.code = 'MINT_FAILED_GAS';
+      throw e;
+    }
+    console.error('[blockchain] sendTransaction failed:', err);
+    const e = new Error(
+      'MINT_FAILED: Blockchain transaction failed. Please try again.'
+    ) as Error & { code: string };
+    e.code = 'MINT_FAILED';
+    throw e;
+  }
+
+  let receipt: Awaited<ReturnType<typeof waitForReceipt>>;
+  try {
+    receipt = await waitForReceipt(sendResult);
+  } catch (err) {
+    console.error('[blockchain] waitForReceipt failed:', err);
+    const e = new Error(
+      'MINT_FAILED: Blockchain transaction failed. Please try again.'
+    ) as Error & { code: string };
+    e.code = 'MINT_FAILED';
+    throw e;
+  }
+
+  if (receipt.status === 'reverted') {
+    const e = new Error(
+      'MINT_FAILED: Blockchain transaction failed. Please try again.'
+    ) as Error & { code: string };
+    e.code = 'MINT_FAILED';
+    throw e;
+  }
+
+  // Parse token ID from the ERC-721 Transfer event
+  // Transfer(address indexed from, address indexed to, uint256 indexed tokenId)
+  // topics: [0]=sig, [1]=from, [2]=to, [3]=tokenId
+  const transferLog = receipt.logs.find(
+    (log) => log.topics[0]?.toLowerCase() === TRANSFER_TOPIC
+  );
+
+  const tokenId = transferLog?.topics[3]
+    ? parseInt(transferLog.topics[3], 16)
+    : 0;
+
+  // Derive a deterministic block ID from the transaction hash
+  const blockId = 'hk_' + txHash.slice(2, 26);
 
   return { tokenId, txHash, blockId };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-function randomHex(length: number): string {
-  return crypto.randomBytes(Math.ceil(length / 2)).toString('hex').slice(0, length);
-}
-
-function randomInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
-}
-
-function simulateLatency(minMs: number, maxMs: number): Promise<void> {
-  const ms = randomInt(minMs, maxMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

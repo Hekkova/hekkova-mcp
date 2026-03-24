@@ -1,28 +1,24 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ListMomentsInputSchema = void 0;
-exports.handleListMoments = handleListMoments;
-const zod_1 = require("zod");
-const database_js_1 = require("../services/database.js");
+import { z } from 'zod';
+import { listMoments } from '../services/database.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
-exports.ListMomentsInputSchema = zod_1.z.object({
-    limit: zod_1.z.number().int().min(1).max(100).default(20),
-    offset: zod_1.z.number().int().min(0).default(0),
-    phase: zod_1.z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).optional(),
-    category: zod_1.z
+export const ListMomentsInputSchema = z.object({
+    limit: z.number().int().min(1).max(100).default(20),
+    offset: z.number().int().min(0).default(0),
+    phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).optional(),
+    category: z
         .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
         .optional(),
-    search: zod_1.z.string().optional(),
-    sort: zod_1.z.enum(['newest', 'oldest']).default('newest'),
-    sealed: zod_1.z.boolean().optional(),
+    search: z.string().optional(),
+    sort: z.enum(['newest', 'oldest']).default('newest'),
+    sealed: z.boolean().optional(),
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
-async function handleListMoments(rawInput, accountContext) {
-    const parsed = exports.ListMomentsInputSchema.safeParse(rawInput ?? {});
+export async function handleListMoments(rawInput, accountContext) {
+    const parsed = ListMomentsInputSchema.safeParse(rawInput ?? {});
     if (!parsed.success) {
         const err = new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
         err.code = 'INVALID_INPUT';
@@ -31,7 +27,7 @@ async function handleListMoments(rawInput, accountContext) {
     const { limit, offset, phase, category, search, sort, sealed } = parsed.data;
     const accountId = accountContext.account.id;
     console.log(`[${new Date().toISOString()}] list_moments | account=${accountId} | limit=${limit} offset=${offset} phase=${phase ?? 'all'} sort=${sort} sealed=${sealed ?? 'all'}`);
-    const { moments, total } = await (0, database_js_1.listMoments)(accountId, {
+    const { moments, total } = await listMoments(accountId, {
         limit,
         offset,
         phase,

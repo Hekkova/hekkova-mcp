@@ -1,11 +1,9 @@
-"use strict";
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova MCP Server — Test Client
 //
 // Connects to the running local MCP server and exercises every tool.
 // Run with: npm run test-client  (server must be running: npm run dev)
 // ─────────────────────────────────────────────────────────────────────────────
-Object.defineProperty(exports, "__esModule", { value: true });
 const BASE_URL = 'http://localhost:3000/mcp';
 const TEST_API_KEY = 'hk_test_local_dev_key_12345678';
 // Minimal 1×1 pixel transparent PNG in base64
@@ -165,4 +163,5 @@ main().catch((err) => {
     console.error('\nFatal error:', err.message);
     process.exit(1);
 });
+export {};
 //# sourceMappingURL=test-client.js.map

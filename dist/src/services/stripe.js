@@ -1,14 +1,6 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.MINT_PACKS = void 0;
-exports.createCheckoutSession = createCheckoutSession;
-exports.constructWebhookEvent = constructWebhookEvent;
-const stripe_1 = __importDefault(require("stripe"));
-const config_js_1 = require("../config.js");
-exports.MINT_PACKS = {
+import Stripe from 'stripe';
+import { config } from '../config.js';
+export const MINT_PACKS = {
     single_light: {
         id: 'single_light',
         name: 'Single Light',
@@ -56,14 +48,14 @@ exports.MINT_PACKS = {
 let _stripe = null;
 function getStripe() {
     if (!_stripe) {
-        _stripe = new stripe_1.default(config_js_1.config.stripeSecretKey || 'sk_test_placeholder');
+        _stripe = new Stripe(config.stripeSecretKey || 'sk_test_placeholder');
     }
     return _stripe;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Create a Stripe Checkout Session for a mint pack purchase
 // ─────────────────────────────────────────────────────────────────────────────
-async function createCheckoutSession(pack, accountId, successUrl, cancelUrl) {
+export async function createCheckoutSession(pack, accountId, successUrl, cancelUrl) {
     const stripe = getStripe();
     const priceData = pack.isLegacyPlan
         ? {
@@ -89,7 +81,7 @@ async function createCheckoutSession(pack, accountId, successUrl, cancelUrl) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Verify and parse an incoming Stripe webhook event
 // ─────────────────────────────────────────────────────────────────────────────
-function constructWebhookEvent(payload, signature, secret) {
+export function constructWebhookEvent(payload, signature, secret) {
     return getStripe().webhooks.constructEvent(payload, signature, secret);
 }
 //# sourceMappingURL=stripe.js.map

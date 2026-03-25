@@ -44,6 +44,21 @@ export interface EncryptResult {
   accConditions: string; // JSON-stringified ACC array (stored in DB + metadata)
 }
 
+// ── Logging helper ────────────────────────────────────────────────────────────
+
+function logLitError(label: string, err: unknown): void {
+  const e = err as Record<string, unknown>;
+  console.error(`[lit] ${label}`);
+  console.error(`[lit]   LIT_NETWORK : ${config.litNetwork}`);
+  console.error(`[lit]   message     : ${e?.message ?? String(err)}`);
+  console.error(`[lit]   name        : ${e?.name ?? '(none)'}`);
+  console.error(`[lit]   errorKind   : ${e?.errorKind ?? '(none)'}`);
+  console.error(`[lit]   errorCode   : ${e?.errorCode ?? '(none)'}`);
+  if (e?.details) console.error(`[lit]   details     :`, e.details);
+  if (e?.info)    console.error(`[lit]   info        :`, e.info);
+  if (e?.stack)   console.error(`[lit]   stack       :\n${e.stack}`);
+}
+
 // ── Lit client singleton ───────────────────────────────────────────────────────
 
 let _litClient: LitNodeClientNodeJs | null = null;
@@ -54,6 +69,7 @@ export async function getLitClient(): Promise<LitNodeClientNodeJs> {
   if (_connectPromise) return _connectPromise;
 
   _connectPromise = (async (): Promise<LitNodeClientNodeJs> => {
+    console.log(`[lit] Connecting to network: ${config.litNetwork}`);
     const client = new LitNodeClientNodeJs({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       litNetwork: config.litNetwork as any,
@@ -65,7 +81,7 @@ export async function getLitClient(): Promise<LitNodeClientNodeJs> {
       console.log(`[lit] Connected to ${config.litNetwork}`);
     } catch (err) {
       _connectPromise = null;
-      console.error('[lit] Connection failed:', err);
+      logLitError('connect() failed', err);
       const e = new Error(
         'LIT_NETWORK_ERROR: Could not connect to the Lit encryption network. Please try again.'
       ) as Error & { code: string };
@@ -90,6 +106,7 @@ function getServerWallet(): ethers.Wallet {
 
 async function getServerSessionSigs(litClient: LitNodeClientNodeJs) {
   const wallet = getServerWallet();
+  console.log(`[lit] Requesting session sigs | network=${config.litNetwork} | wallet=${wallet.address}`);
 
   return litClient.getSessionSigs({
     chain: 'polygon',
@@ -109,22 +126,30 @@ async function getServerSessionSigs(litClient: LitNodeClientNodeJs) {
       expiration?: string;
       resourceAbilityRequests?: unknown[];
     }) => {
-      const toSign = await createSiweMessageWithRecaps({
-        uri: uri ?? 'https://hekkova.com',
-        expiration: expiration ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-        resources: resourceAbilityRequests as Parameters<typeof createSiweMessageWithRecaps>[0]['resources'],
-        walletAddress: wallet.address,
-        nonce: await litClient.getLatestBlockhash(),
-        litNodeClient: litClient,
-        domain: 'hekkova.com',
-        statement: 'Hekkova server signing for Lit Protocol encryption.',
-      });
+      console.log(`[lit] authNeededCallback | uri=${uri}`);
+      try {
+        const toSign = await createSiweMessageWithRecaps({
+          uri: uri ?? 'https://hekkova.com',
+          expiration: expiration ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          resources: resourceAbilityRequests as Parameters<typeof createSiweMessageWithRecaps>[0]['resources'],
+          walletAddress: wallet.address,
+          nonce: await litClient.getLatestBlockhash(),
+          litNodeClient: litClient,
+          domain: 'hekkova.com',
+          statement: 'Hekkova server signing for Lit Protocol encryption.',
+        });
 
-      return generateAuthSig({
-        signer: wallet,
-        toSign,
-        address: wallet.address,
-      });
+        const authSig = await generateAuthSig({
+          signer: wallet,
+          toSign,
+          address: wallet.address,
+        });
+        console.log(`[lit] authSig generated | address=${authSig.address}`);
+        return authSig;
+      } catch (err) {
+        logLitError('authNeededCallback failed', err);
+        throw err;
+      }
     },
   });
 }
@@ -222,6 +247,10 @@ export async function encryptForPhase(
   const ownerAddress = accountContext.account.wallet_address ?? serverWallet.address;
   const acc = buildACC(ownerAddress, serverWallet.address, eclipseRevealDate);
 
+  console.log(
+    `[lit] encryptForPhase | network=${config.litNetwork} | phase=${phase} | owner=${ownerAddress} | eclipseRevealDate=${eclipseRevealDate ?? 'none'}`
+  );
+
   let litClient: LitNodeClientNodeJs;
   try {
     litClient = await getLitClient();
@@ -243,8 +272,9 @@ export async function encryptForPhase(
     );
     ciphertext = result.ciphertext;
     dataToEncryptHash = result.dataToEncryptHash;
+    console.log(`[lit] encryptString succeeded | dataToEncryptHash=${dataToEncryptHash.slice(0, 16)}...`);
   } catch (err) {
-    console.error('[lit] encryptString failed:', err);
+    logLitError('encryptString failed', err);
     const e = new Error(
       'ENCRYPTION_FAILED: Failed to encrypt content. Please try again.'
     ) as Error & { code: string };
@@ -274,6 +304,10 @@ export async function decryptContent(
   dataToEncryptHash: string,
   accConditions: string
 ): Promise<string> {
+  console.log(
+    `[lit] decryptContent | network=${config.litNetwork} | hash=${dataToEncryptHash.slice(0, 16)}...`
+  );
+
   let litClient: LitNodeClientNodeJs;
   try {
     litClient = await getLitClient();
@@ -284,8 +318,9 @@ export async function decryptContent(
   let sessionSigs: Awaited<ReturnType<typeof getServerSessionSigs>>;
   try {
     sessionSigs = await getServerSessionSigs(litClient);
+    console.log(`[lit] Session sigs obtained`);
   } catch (err) {
-    console.error('[lit] getSessionSigs failed:', err);
+    logLitError('getSessionSigs failed', err);
     const e = new Error(
       'DECRYPTION_FAILED: Failed to decrypt content. You may not have permission to view this moment.'
     ) as Error & { code: string };
@@ -296,7 +331,7 @@ export async function decryptContent(
   const acc = JSON.parse(accConditions) as ACC;
 
   try {
-    return await decryptToString(
+    const decrypted = await decryptToString(
       {
         ciphertext,
         dataToEncryptHash,
@@ -306,8 +341,10 @@ export async function decryptContent(
       } as Parameters<typeof decryptToString>[0],
       litClient
     );
+    console.log(`[lit] decryptToString succeeded`);
+    return decrypted;
   } catch (err) {
-    console.error('[lit] decryptToString failed:', err);
+    logLitError('decryptToString failed', err);
     const e = new Error(
       'DECRYPTION_FAILED: Failed to decrypt content. You may not have permission to view this moment.'
     ) as Error & { code: string };

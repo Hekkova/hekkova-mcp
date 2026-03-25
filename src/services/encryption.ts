@@ -74,7 +74,17 @@ export async function getLitClient(): Promise<LitNodeClientNodeJs> {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       litNetwork: config.litNetwork as any,
       debug: false,
+      connectTimeout: 60_000,
     });
+
+    // Log node URLs so we can verify connectivity from Railway
+    const bootstrapUrls = (client as unknown as { config: { bootstrapUrls?: string[] } }).config?.bootstrapUrls;
+    if (bootstrapUrls?.length) {
+      console.log(`[lit] Bootstrap node URLs (${bootstrapUrls.length}):`);
+      bootstrapUrls.forEach((url, i) => console.log(`[lit]   [${i}] ${url}`));
+    } else {
+      console.log(`[lit] No bootstrap URLs found — network config may be fetched dynamically`);
+    }
 
     try {
       await client.connect();

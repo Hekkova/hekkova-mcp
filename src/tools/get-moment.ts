@@ -88,5 +88,19 @@ export async function handleGetMoment(
     };
   }
 
+  // ── Encrypted content note ────────────────────────────────────────────────
+  // For encrypted moments, the media_cid points to Lit-encrypted ciphertext.
+  // The dashboard can request decryption via POST /api/moments/:block_id/decrypt.
+  // TODO: Migrate to client-side Lit decryption so the server never sees plaintext.
+  if (moment.encrypted) {
+    return {
+      ...moment,
+      decryption_available: !!(moment.lit_acc_hash && moment.lit_acc_conditions),
+      decryption_note: moment.lit_acc_hash
+        ? 'Content is encrypted. Use POST /api/moments/:block_id/decrypt to access it.'
+        : 'Content is encrypted (legacy stub — re-mint to enable decryption).',
+    };
+  }
+
   return moment;
 }

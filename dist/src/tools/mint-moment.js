@@ -91,11 +91,13 @@ export async function executeMint(input, accountContext, overrides = {}) {
     const phase = input.phase;
     let mediaToPin = input.media;
     let encrypted = false;
-    let _accHash = '';
+    let accHash = '';
+    let accConditions = '';
     if (shouldEncrypt(phase)) {
-        const result = await encryptForPhase(input.media, phase, accountContext);
+        const result = await encryptForPhase(input.media, phase, accountContext, input.eclipse_reveal_date);
         mediaToPin = result.encryptedData;
-        _accHash = result.accHash;
+        accHash = result.accHash;
+        accConditions = result.accConditions;
         encrypted = true;
     }
     // 6. Pin media to IPFS
@@ -132,6 +134,9 @@ export async function executeMint(input, accountContext, overrides = {}) {
             source_platform: overrides.source_platform ?? null,
             eclipse_reveal_date: input.eclipse_reveal_date ?? null,
             tags: input.tags ?? [],
+            // Lit Protocol decryption metadata (present when encrypted: true)
+            lit_acc_hash: accHash || null,
+            lit_acc_conditions: accConditions ? JSON.parse(accConditions) : null,
         },
     };
     // 8. Pin metadata to IPFS
@@ -155,6 +160,8 @@ export async function executeMint(input, accountContext, overrides = {}) {
         phase: phase,
         category: input.category ?? null,
         encrypted,
+        lit_acc_hash: accHash || null,
+        lit_acc_conditions: accConditions || null,
         media_cid: mediaCid,
         metadata_cid: metadataCid,
         media_type: input.media_type,

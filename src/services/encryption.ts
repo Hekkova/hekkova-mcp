@@ -1,86 +1,317 @@
-import * as crypto from 'crypto';
-import type { AccountContext, Phase } from '../types/index.js';
+import { LitNodeClientNodeJs } from '@lit-protocol/lit-node-client';
+import { LIT_ABILITY } from '@lit-protocol/constants';
+import { encryptString, decryptToString } from '@lit-protocol/encryption';
+import {
+  LitAccessControlConditionResource,
+  createSiweMessageWithRecaps,
+  generateAuthSig,
+} from '@lit-protocol/auth-helpers';
+import { ethers } from 'ethers';
+import { config } from '../config.js';
+import type { Phase, AccountContext } from '../types/index.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hekkova MCP Server — Encryption Service (STUB)
+// Hekkova MCP Server — Encryption Service (Lit Protocol v7)
 //
-// All functions return realistic fake encrypted data.
-// TODO: Replace with real Lit Protocol implementation
+// Encrypts content and gates decryption on blockchain-verifiable Access
+// Control Conditions (ACCs). Different privacy phases get different ACCs.
+// The Lit network holds encryption key shares — no single party (including
+// Hekkova) can decrypt without meeting the conditions.
+//
+// Server-side hybrid approach (MVP): the server wallet is always included as
+// an OR condition so the server can decrypt on behalf of authenticated owners.
+// TODO: Migrate to full client-side decryption so the server never sees
+//       plaintext — users prove ACC membership in their own browser/wallet.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface EncryptResult {
-  encryptedData: string;
-  accHash: string;
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type AccCondition = {
+  contractAddress: string;
+  standardContractType: string;
+  chain: string;
+  method: string;
+  parameters: (string | boolean)[];
+  returnValueTest: { comparator: string; value: string };
+};
+
+type OperatorCondition = { operator: 'or' | 'and' };
+type ACC = (AccCondition | OperatorCondition)[];
+
+export interface EncryptResult {
+  encryptedData: string; // base64 ciphertext from Lit (stored as media in IPFS)
+  accHash: string;       // dataToEncryptHash from Lit (stored in DB + metadata)
+  accConditions: string; // JSON-stringified ACC array (stored in DB + metadata)
+}
+
+// ── Lit client singleton ───────────────────────────────────────────────────────
+
+let _litClient: LitNodeClientNodeJs | null = null;
+let _connectPromise: Promise<LitNodeClientNodeJs> | null = null;
+
+export async function getLitClient(): Promise<LitNodeClientNodeJs> {
+  if (_litClient?.ready) return _litClient;
+  if (_connectPromise) return _connectPromise;
+
+  _connectPromise = (async (): Promise<LitNodeClientNodeJs> => {
+    const client = new LitNodeClientNodeJs({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      litNetwork: config.litNetwork as any,
+      debug: false,
+    });
+
+    try {
+      await client.connect();
+      console.log(`[lit] Connected to ${config.litNetwork}`);
+    } catch (err) {
+      _connectPromise = null;
+      console.error('[lit] Connection failed:', err);
+      const e = new Error(
+        'LIT_NETWORK_ERROR: Could not connect to the Lit encryption network. Please try again.'
+      ) as Error & { code: string };
+      e.code = 'LIT_NETWORK_ERROR';
+      throw e;
+    }
+
+    _litClient = client;
+    return client;
+  })();
+
+  return _connectPromise;
+}
+
+// ── Server wallet (derived once) ──────────────────────────────────────────────
+
+function getServerWallet(): ethers.Wallet {
+  return new ethers.Wallet(config.serverWalletPrivateKey);
+}
+
+// ── Session signatures (1-hour TTL, regenerated each call) ────────────────────
+
+async function getServerSessionSigs(litClient: LitNodeClientNodeJs) {
+  const wallet = getServerWallet();
+
+  return litClient.getSessionSigs({
+    chain: 'polygon',
+    expiration: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    resourceAbilityRequests: [
+      {
+        resource: new LitAccessControlConditionResource('*'),
+        ability: LIT_ABILITY.AccessControlConditionDecryption,
+      },
+    ],
+    authNeededCallback: async ({
+      uri,
+      expiration,
+      resourceAbilityRequests,
+    }: {
+      uri?: string;
+      expiration?: string;
+      resourceAbilityRequests?: unknown[];
+    }) => {
+      const toSign = await createSiweMessageWithRecaps({
+        uri: uri ?? 'https://hekkova.com',
+        expiration: expiration ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        resources: resourceAbilityRequests as Parameters<typeof createSiweMessageWithRecaps>[0]['resources'],
+        walletAddress: wallet.address,
+        nonce: await litClient.getLatestBlockhash(),
+        litNodeClient: litClient,
+        domain: 'hekkova.com',
+        statement: 'Hekkova server signing for Lit Protocol encryption.',
+      });
+
+      return generateAuthSig({
+        signer: wallet,
+        toSign,
+        address: wallet.address,
+      });
+    },
+  });
+}
+
+// ── Access Control Conditions ─────────────────────────────────────────────────
+
+function walletCondition(address: string): AccCondition {
+  return {
+    contractAddress: '',
+    standardContractType: '',
+    chain: 'polygon',
+    method: '',
+    parameters: [':userAddress'],
+    returnValueTest: {
+      comparator: '=',
+      value: address.toLowerCase(),
+    },
+  };
+}
+
+/**
+ * Build the ACC for a given phase.
+ *
+ * All ACCs include the server wallet as an OR condition so the server can
+ * decrypt on behalf of authenticated owners (MVP hybrid approach).
+ *
+ * new_moon  : ownerWallet OR serverWallet
+ * crescent  : ownerWallet OR serverWallet (circle management TODO)
+ * gibbous   : ownerWallet OR serverWallet (circle management TODO)
+ * eclipse   : (ownerWallet OR serverWallet) AND timeCondition
+ */
+function buildACC(
+  ownerAddress: string,
+  serverAddress: string,
+  eclipseRevealDate?: string
+): ACC {
+  const ownerIsServer = ownerAddress.toLowerCase() === serverAddress.toLowerCase();
+
+  // Base: owner OR server (collapsed to just server when they're the same)
+  const base: ACC = ownerIsServer
+    ? [walletCondition(serverAddress)]
+    : [
+        walletCondition(ownerAddress),
+        { operator: 'or' },
+        walletCondition(serverAddress),
+      ];
+
+  if (!eclipseRevealDate) return base;
+
+  // Eclipse: wrap base conditions with AND time-lock
+  const revealTimestamp = Math.floor(new Date(eclipseRevealDate).getTime() / 1000);
+  return [
+    ...base,
+    { operator: 'and' },
+    {
+      contractAddress: '',
+      standardContractType: '',
+      chain: 'polygon',
+      method: 'eth_getBlockByNumber',
+      parameters: ['latest', false],
+      returnValueTest: {
+        comparator: '>=',
+        value: String(revealTimestamp),
+      },
+    },
+  ];
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/** Returns true when the given phase requires Lit Protocol encryption. */
+export function shouldEncrypt(phase: Phase): boolean {
+  return phase !== 'full_moon';
 }
 
 /**
  * Encrypt media for a given privacy phase using Lit Protocol.
  *
- * TODO: Replace with real Lit Protocol implementation
- * - Import LitNodeClient from @lit-protocol/lit-node-client
- * - Connect to the Lit network (config.litNetwork)
- * - Build access control conditions based on the phase:
- *   - new_moon:  owner wallet address only (NFT ownership condition)
- *   - crescent:  allow list of 2–10 wallet addresses
- *   - gibbous:   token-gated: hold >= 1 of the Hekkova ERC-721 collection
- * - Call litNodeClient.encrypt({ dataToEncrypt, accessControlConditions })
- * - Store the encryptedSymmetricKey on the Lit network
- * - Return the encrypted media bytes (as base64) and the ACC hash (CID)
- *
- * @param mediaBase64 - base64-encoded raw media content
- * @param phase       - the target privacy phase determining access conditions
- * @param accountContext - authenticated account/key context for building ACCs
+ * Returns:
+ *   encryptedData  — base64 ciphertext (pin to IPFS as the media)
+ *   accHash        — dataToEncryptHash (store in DB + metadata for decryption)
+ *   accConditions  — JSON-stringified ACC (store in DB + metadata for decryption)
  */
 export async function encryptForPhase(
   mediaBase64: string,
   phase: Phase,
-  accountContext: AccountContext
+  accountContext: AccountContext,
+  eclipseRevealDate?: string
 ): Promise<EncryptResult> {
-  // TODO: Replace with real Lit Protocol implementation
-  void accountContext;
-
   if (phase === 'full_moon') {
-    // Full moon = no encryption; return the media unchanged
-    return { encryptedData: mediaBase64, accHash: '' };
+    return { encryptedData: mediaBase64, accHash: '', accConditions: '' };
   }
 
-  // new_moon, crescent, gibbous — simulate encryption
-  await simulateLatency(100, 300);
+  const serverWallet = getServerWallet();
+  const ownerAddress = accountContext.account.wallet_address ?? serverWallet.address;
+  const acc = buildACC(ownerAddress, serverWallet.address, eclipseRevealDate);
 
-  // In the real implementation this would be the Lit-encrypted ciphertext.
-  // For now we return the original base64 data unchanged as the "encrypted" form.
-  const encryptedData = mediaBase64;
-  const accHash = fakeCid();
+  let litClient: LitNodeClientNodeJs;
+  try {
+    litClient = await getLitClient();
+  } catch (err) {
+    throw err; // already a formatted LIT_NETWORK_ERROR
+  }
 
-  return { encryptedData, accHash };
+  let ciphertext: string;
+  let dataToEncryptHash: string;
+
+  try {
+    const result = await encryptString(
+      {
+        dataToEncrypt: mediaBase64,
+        accessControlConditions: acc as unknown as Parameters<typeof encryptString>[0]['accessControlConditions'],
+        chain: 'polygon',
+      } as Parameters<typeof encryptString>[0],
+      litClient
+    );
+    ciphertext = result.ciphertext;
+    dataToEncryptHash = result.dataToEncryptHash;
+  } catch (err) {
+    console.error('[lit] encryptString failed:', err);
+    const e = new Error(
+      'ENCRYPTION_FAILED: Failed to encrypt content. Please try again.'
+    ) as Error & { code: string };
+    e.code = 'ENCRYPTION_FAILED';
+    throw e;
+  }
+
+  return {
+    encryptedData: ciphertext,
+    accHash: dataToEncryptHash,
+    accConditions: JSON.stringify(acc),
+  };
 }
 
 /**
- * Returns true when the given phase requires Lit Protocol encryption.
+ * Decrypt ciphertext using Lit Protocol.
  *
- * - new_moon, crescent, gibbous → encrypted
- * - full_moon                   → public (no encryption)
+ * The server wallet signs session sigs, which satisfies the OR condition in
+ * every ACC. Callers must verify ownership before calling this.
+ *
+ * @param ciphertext        base64 ciphertext (re-encoded from IPFS binary)
+ * @param dataToEncryptHash lit_acc_hash from the moments table
+ * @param accConditions     lit_acc_conditions JSON string from the moments table
  */
-export function shouldEncrypt(phase: Phase): boolean {
-  return phase !== 'full_moon';
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Utilities
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Generate a realistic-looking IPFS CIDv0 (Qm + 44 alphanumeric characters). */
-function fakeCid(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz123456789';
-  let result = 'Qm';
-  const bytes = crypto.randomBytes(44);
-  for (let i = 0; i < 44; i++) {
-    result += chars[bytes[i] % chars.length];
+export async function decryptContent(
+  ciphertext: string,
+  dataToEncryptHash: string,
+  accConditions: string
+): Promise<string> {
+  let litClient: LitNodeClientNodeJs;
+  try {
+    litClient = await getLitClient();
+  } catch (err) {
+    throw err;
   }
-  return result;
-}
 
-function simulateLatency(minMs: number, maxMs: number): Promise<void> {
-  const ms = Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  let sessionSigs: Awaited<ReturnType<typeof getServerSessionSigs>>;
+  try {
+    sessionSigs = await getServerSessionSigs(litClient);
+  } catch (err) {
+    console.error('[lit] getSessionSigs failed:', err);
+    const e = new Error(
+      'DECRYPTION_FAILED: Failed to decrypt content. You may not have permission to view this moment.'
+    ) as Error & { code: string };
+    e.code = 'DECRYPTION_FAILED';
+    throw e;
+  }
+
+  const acc = JSON.parse(accConditions) as ACC;
+
+  try {
+    return await decryptToString(
+      {
+        ciphertext,
+        dataToEncryptHash,
+        accessControlConditions: acc as unknown as Parameters<typeof decryptToString>[0]['accessControlConditions'],
+        sessionSigs,
+        chain: 'polygon',
+      } as Parameters<typeof decryptToString>[0],
+      litClient
+    );
+  } catch (err) {
+    console.error('[lit] decryptToString failed:', err);
+    const e = new Error(
+      'DECRYPTION_FAILED: Failed to decrypt content. You may not have permission to view this moment.'
+    ) as Error & { code: string };
+    e.code = 'DECRYPTION_FAILED';
+    throw e;
+  }
 }

@@ -122,12 +122,19 @@ export async function executeMint(
   const phase = input.phase as Phase;
   let mediaToPin = input.media;
   let encrypted = false;
-  let _accHash = '';
+  let accHash = '';
+  let accConditions = '';
 
   if (shouldEncrypt(phase)) {
-    const result = await encryptForPhase(input.media, phase, accountContext);
+    const result = await encryptForPhase(
+      input.media,
+      phase,
+      accountContext,
+      input.eclipse_reveal_date
+    );
     mediaToPin = result.encryptedData;
-    _accHash = result.accHash;
+    accHash = result.accHash;
+    accConditions = result.accConditions;
     encrypted = true;
   }
 
@@ -166,6 +173,9 @@ export async function executeMint(
       source_platform: overrides.source_platform ?? null,
       eclipse_reveal_date: input.eclipse_reveal_date ?? null,
       tags: input.tags ?? [],
+      // Lit Protocol decryption metadata (present when encrypted: true)
+      lit_acc_hash: accHash || null,
+      lit_acc_conditions: accConditions ? JSON.parse(accConditions) : null,
     },
   };
 
@@ -193,6 +203,8 @@ export async function executeMint(
     phase: phase,
     category: (input.category as Category) ?? null,
     encrypted,
+    lit_acc_hash: accHash || null,
+    lit_acc_conditions: accConditions || null,
     media_cid: mediaCid,
     metadata_cid: metadataCid,
     media_type: input.media_type as MediaType,

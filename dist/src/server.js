@@ -15,7 +15,8 @@ import { handleExportMoments } from './tools/export-moments.js';
 import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir, getMomentByBlockId } from './services/database.js';
+import { decryptContent } from './services/encryption.js';
 import * as crypto from 'crypto';
 const generalLimits = new Map();
 const mintLimits = new Map();
@@ -664,6 +665,78 @@ app.get('/api/export', async (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Content-Disposition', 'attachment; filename="moments.json"');
         res.send(JSON.stringify(moments, null, 2));
+    }
+});
+// POST /api/moments/:block_id/decrypt — server-side hybrid decryption
+// Verifies ownership via Supabase JWT, then uses the server wallet to satisfy
+// the Lit ACC and return decrypted media to the authenticated owner.
+//
+// TODO: Migrate to client-side Lit decryption so the server never sees
+//       plaintext — the user's wallet proves ACC membership in their browser.
+app.post('/api/moments/:block_id/decrypt', async (req, res) => {
+    let account;
+    try {
+        account = await requireSupabaseAuth(req.headers.authorization);
+    }
+    catch {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        return;
+    }
+    const blockId = req.params['block_id'];
+    const moment = await getMomentByBlockId(blockId, account.id);
+    if (!moment) {
+        res.status(404).json({ error: 'NOT_FOUND', message: `No moment found with block_id: ${blockId}` });
+        return;
+    }
+    if (!moment.encrypted) {
+        res.status(400).json({ error: 'NOT_ENCRYPTED', message: 'This moment is not encrypted.' });
+        return;
+    }
+    if (!moment.lit_acc_hash || !moment.lit_acc_conditions) {
+        res.status(400).json({
+            error: 'DECRYPTION_UNAVAILABLE',
+            message: 'Decryption metadata is missing. This moment may have been minted before Lit Protocol was enabled.',
+        });
+        return;
+    }
+    // Eclipse: refuse decryption before reveal date
+    if (moment.category === 'eclipse' && moment.eclipse_reveal_date) {
+        const revealDate = new Date(moment.eclipse_reveal_date);
+        if (new Date() < revealDate) {
+            res.status(403).json({
+                error: 'ECLIPSE_SEALED',
+                message: `This moment is sealed until ${moment.eclipse_reveal_date}.`,
+                reveals_at: moment.eclipse_reveal_date,
+            });
+            return;
+        }
+    }
+    try {
+        // Fetch encrypted ciphertext from IPFS and re-encode to base64
+        const ipfsUrl = `${config.pinataGateway}/ipfs/${moment.media_cid}`;
+        const ipfsResponse = await fetch(ipfsUrl);
+        if (!ipfsResponse.ok) {
+            throw Object.assign(new Error('Failed to fetch encrypted content from IPFS'), { code: 'DECRYPTION_FAILED' });
+        }
+        const encryptedBuffer = await ipfsResponse.arrayBuffer();
+        const ciphertext = Buffer.from(encryptedBuffer).toString('base64');
+        const decryptedMedia = await decryptContent(ciphertext, moment.lit_acc_hash, moment.lit_acc_conditions);
+        res.json({
+            block_id: moment.block_id,
+            decrypted_media: decryptedMedia,
+            media_type: moment.media_type,
+            title: moment.title,
+            phase: moment.phase,
+        });
+    }
+    catch (err) {
+        const e = err;
+        console.error(`[decrypt] ${blockId}:`, e.message);
+        const code = e.code ?? 'DECRYPTION_FAILED';
+        const message = e.message.startsWith('DECRYPTION_FAILED')
+            ? e.message
+            : 'DECRYPTION_FAILED: Failed to decrypt content. You may not have permission to view this moment.';
+        res.status(500).json({ error: code, message });
     }
 });
 // ── MCP endpoint ───────────────────────────────────────────────────────────

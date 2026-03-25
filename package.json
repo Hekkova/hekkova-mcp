@@ -12,6 +12,10 @@
     "test-client": "tsx scripts/test-client.ts"
   },
   "dependencies": {
+    "@lit-protocol/auth-helpers": "^7.4.0",
+    "@lit-protocol/constants": "^7.4.0",
+    "@lit-protocol/encryption": "^7.4.0",
+    "@lit-protocol/lit-node-client": "^7.4.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@supabase/supabase-js": "^2.49.4",
     "@types/cors": "^2.8.17",

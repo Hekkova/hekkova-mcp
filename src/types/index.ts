@@ -63,6 +63,8 @@ export interface Moment {
   phase: Phase;
   category: Category;
   encrypted: boolean;
+  lit_acc_hash: string | null;
+  lit_acc_conditions: string | null;
   media_cid: string;
   metadata_cid: string;
   media_type: MediaType;

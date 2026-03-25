@@ -31,7 +31,7 @@ export const config = {
     pinataJwt: required('PINATA_JWT'),
     pinataGateway: optional('PINATA_GATEWAY', 'https://gateway.pinata.cloud'),
     // ── Lit Protocol ─────────────────────────────────────────────────────────
-    litNetwork: optional('LIT_NETWORK', 'cayenne'),
+    litNetwork: optional('LIT_NETWORK', 'datil-dev'),
     // ── Stripe ───────────────────────────────────────────────────────────────
     stripeSecretKey: required('STRIPE_SECRET_KEY'),
     stripeWebhookSecret: required('STRIPE_WEBHOOK_SECRET'),

@@ -1,33 +1,31 @@
-import type { AccountContext, Phase } from '../types/index.js';
-interface EncryptResult {
+import { LitNodeClientNodeJs } from '@lit-protocol/lit-node-client';
+import type { Phase, AccountContext } from '../types/index.js';
+export interface EncryptResult {
     encryptedData: string;
     accHash: string;
+    accConditions: string;
 }
+export declare function getLitClient(): Promise<LitNodeClientNodeJs>;
+/** Returns true when the given phase requires Lit Protocol encryption. */
+export declare function shouldEncrypt(phase: Phase): boolean;
 /**
  * Encrypt media for a given privacy phase using Lit Protocol.
  *
- * TODO: Replace with real Lit Protocol implementation
- * - Import LitNodeClient from @lit-protocol/lit-node-client
- * - Connect to the Lit network (config.litNetwork)
- * - Build access control conditions based on the phase:
- *   - new_moon:  owner wallet address only (NFT ownership condition)
- *   - crescent:  allow list of 2–10 wallet addresses
- *   - gibbous:   token-gated: hold >= 1 of the Hekkova ERC-721 collection
- * - Call litNodeClient.encrypt({ dataToEncrypt, accessControlConditions })
- * - Store the encryptedSymmetricKey on the Lit network
- * - Return the encrypted media bytes (as base64) and the ACC hash (CID)
- *
- * @param mediaBase64 - base64-encoded raw media content
- * @param phase       - the target privacy phase determining access conditions
- * @param accountContext - authenticated account/key context for building ACCs
+ * Returns:
+ *   encryptedData  — base64 ciphertext (pin to IPFS as the media)
+ *   accHash        — dataToEncryptHash (store in DB + metadata for decryption)
+ *   accConditions  — JSON-stringified ACC (store in DB + metadata for decryption)
  */
-export declare function encryptForPhase(mediaBase64: string, phase: Phase, accountContext: AccountContext): Promise<EncryptResult>;
+export declare function encryptForPhase(mediaBase64: string, phase: Phase, accountContext: AccountContext, eclipseRevealDate?: string): Promise<EncryptResult>;
 /**
- * Returns true when the given phase requires Lit Protocol encryption.
+ * Decrypt ciphertext using Lit Protocol.
  *
- * - new_moon, crescent, gibbous → encrypted
- * - full_moon                   → public (no encryption)
+ * The server wallet signs session sigs, which satisfies the OR condition in
+ * every ACC. Callers must verify ownership before calling this.
+ *
+ * @param ciphertext        base64 ciphertext (re-encoded from IPFS binary)
+ * @param dataToEncryptHash lit_acc_hash from the moments table
+ * @param accConditions     lit_acc_conditions JSON string from the moments table
  */
-export declare function shouldEncrypt(phase: Phase): boolean;
-export {};
+export declare function decryptContent(ciphertext: string, dataToEncryptHash: string, accConditions: string): Promise<string>;
 //# sourceMappingURL=encryption.d.ts.map

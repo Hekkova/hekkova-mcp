@@ -1,3 +1,10 @@
+import { setGlobalDispatcher, Agent } from 'undici';
+import dns from 'dns';
+
+// Force IPv4 and increase fetch timeouts — fixes 'fetch failed' on Railway (IPv6/Undici timeout)
+dns.setDefaultResultOrder('ipv4first');
+setGlobalDispatcher(new Agent({ connectTimeout: 30_000 }));
+
 import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';

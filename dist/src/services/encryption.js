@@ -4,6 +4,17 @@ import { encryptString, decryptToString } from '@lit-protocol/encryption';
 import { LitAccessControlConditionResource, createSiweMessageWithRecaps, generateAuthSig, } from '@lit-protocol/auth-helpers';
 import { ethers } from 'ethers';
 import { config } from '../config.js';
+// TODO [HIGH]: npm audit reports 32 vulnerabilities (12 high) in @lit-protocol
+//   transitive deps (ethers v5 + ws). The auto-fix requires breaking changes to
+//   @lit-protocol versions. Evaluate upgrading to @lit-protocol v8 (auth-helpers
+//   8.0.0+) and run a full regression test on encrypt/decrypt before deploying.
+// TODO [MEDIUM]: Migrate to full client-side Lit decryption so the server never
+//   holds plaintext. The server wallet is currently an OR condition in every ACC,
+//   meaning a compromised server key exposes all encrypted moments. Target: user's
+//   own wallet signs the Lit session in-browser; server is removed from all ACCs.
+// TODO [LOW]: Never log decrypted media or encryption key material — current
+//   logLitError() only logs error objects, but audit this if debug logging is
+//   ever expanded.
 // ── Logging helper ────────────────────────────────────────────────────────────
 function logLitError(label, err) {
     const e = err;
@@ -34,7 +45,17 @@ export async function getLitClient() {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             litNetwork: config.litNetwork,
             debug: false,
+            connectTimeout: 60_000,
         });
+        // Log node URLs so we can verify connectivity from Railway
+        const bootstrapUrls = client.config?.bootstrapUrls;
+        if (bootstrapUrls?.length) {
+            console.log(`[lit] Bootstrap node URLs (${bootstrapUrls.length}):`);
+            bootstrapUrls.forEach((url, i) => console.log(`[lit]   [${i}] ${url}`));
+        }
+        else {
+            console.log(`[lit] No bootstrap URLs found — network config may be fetched dynamically`);
+        }
         try {
             await client.connect();
             console.log(`[lit] Connected to ${config.litNetwork}`);

@@ -91,7 +91,12 @@ export async function listMoments(accountId, opts) {
     if (opts.category)
         query = query.eq('category', opts.category);
     if (opts.search) {
-        query = query.or(`title.ilike.%${opts.search}%,description.ilike.%${opts.search}%`);
+        // Strip PostgREST filter-syntax characters to prevent filter injection.
+        // Allowed through: alphanumerics, spaces, and common punctuation.
+        const safeSearch = opts.search.replace(/[%_,()[\]'"\\]/g, '');
+        if (safeSearch) {
+            query = query.or(`title.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%`);
+        }
     }
     // Eclipse sealed filter: sealed = category is 'eclipse' AND reveal date is in the future
     if (opts.sealed === true) {
@@ -298,14 +303,19 @@ export async function listApiKeys(accountId) {
         throw new Error(`Failed to list API keys: ${error.message}`);
     return (data ?? []);
 }
-export async function revokeApiKey(keyId) {
+export async function revokeApiKey(keyId, accountId) {
     const supabase = getSupabase();
-    const { error } = await supabase
+    // accountId filter prevents any authenticated user from revoking another account's keys
+    const { data, error } = await supabase
         .from('api_keys')
         .update({ revoked_at: new Date().toISOString() })
-        .eq('id', keyId);
+        .eq('id', keyId)
+        .eq('account_id', accountId)
+        .select('id');
     if (error)
         throw new Error(`Failed to revoke API key: ${error.message}`);
+    if (!data || data.length === 0)
+        throw Object.assign(new Error('Key not found'), { notFound: true });
 }
 // ─────────────────────────────────────────────────────────────────────────────
 // Heir management (Legacy Plan only)

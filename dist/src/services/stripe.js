@@ -78,6 +78,9 @@ export async function createCheckoutSession(pack, accountId, successUrl, cancelU
         cancel_url: cancelUrl,
     });
 }
+// TODO [MEDIUM]: Track processed Stripe event IDs (e.g. in a DB table) to
+//   prevent double-crediting if Stripe retries a webhook after a 5xx. Store
+//   event.id and skip processing if already seen.
 // ─────────────────────────────────────────────────────────────────────────────
 // Verify and parse an incoming Stripe webhook event
 // ─────────────────────────────────────────────────────────────────────────────

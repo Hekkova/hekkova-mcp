@@ -1,3 +1,8 @@
+import { setGlobalDispatcher, Agent } from 'undici';
+import dns from 'dns';
+// Force IPv4 and increase fetch timeouts — fixes 'fetch failed' on Railway (IPv6/Undici timeout)
+dns.setDefaultResultOrder('ipv4first');
+setGlobalDispatcher(new Agent({ connectTimeout: 30_000 }));
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -290,7 +295,37 @@ function createMcpServer() {
 // Express app
 // ─────────────────────────────────────────────────────────────────────────────
 const app = express();
-app.use(cors());
+// ── CORS — only allow requests from official Hekkova origins ───────────────
+const ALLOWED_ORIGINS = new Set([
+    'https://hekkova.com',
+    'https://app.hekkova.com',
+    'https://www.hekkova.com',
+]);
+app.use(cors({
+    origin: (origin, callback) => {
+        // Allow requests with no origin (server-to-server, curl, MCP clients)
+        if (!origin)
+            return callback(null, true);
+        if (ALLOWED_ORIGINS.has(origin))
+            return callback(null, true);
+        callback(new Error(`CORS: origin not allowed — ${origin}`));
+    },
+    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'stripe-signature'],
+    credentials: false,
+}));
+// ── Security headers ───────────────────────────────────────────────────────
+app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '0'); // modern browsers ignore this; CSP is preferred
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    // HSTS — only enforced when served over HTTPS (deployment platform handles TLS)
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains');
+    next();
+});
 // ── Stripe webhook — must be registered before express.json() to get raw body
 app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
     const signature = req.headers['stripe-signature'];
@@ -416,6 +451,7 @@ async function requireSupabaseAuth(authHeader) {
     return insertAccount(userId, displayName);
 }
 // POST /api/keys — generate a new API key for the authenticated account
+const MAX_KEYS_PER_ACCOUNT = 10;
 app.post('/api/keys', async (req, res) => {
     let account;
     try {
@@ -426,6 +462,15 @@ app.post('/api/keys', async (req, res) => {
         return;
     }
     try {
+        // Enforce per-account key limit to prevent unbounded key proliferation
+        const existingKeys = await listApiKeys(account.id);
+        if (existingKeys.length >= MAX_KEYS_PER_ACCOUNT) {
+            res.status(422).json({
+                error: 'KEY_LIMIT_REACHED',
+                message: `Maximum of ${MAX_KEYS_PER_ACCOUNT} API keys per account. Revoke an existing key before creating a new one.`,
+            });
+            return;
+        }
         const { fullKey, prefix, hash } = generateApiKey();
         await createApiKey(account.id, hash, prefix);
         res.status(201).json({ key: fullKey });
@@ -462,10 +507,11 @@ app.get('/api/keys', async (req, res) => {
         res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to list API keys' });
     }
 });
-// DELETE /api/keys/:id — revoke a key
+// DELETE /api/keys/:id — revoke a key (only the owning account may revoke it)
 app.delete('/api/keys/:id', async (req, res) => {
+    let account;
     try {
-        await requireSupabaseAuth(req.headers.authorization);
+        account = await requireSupabaseAuth(req.headers.authorization);
     }
     catch {
         res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
@@ -477,11 +523,15 @@ app.delete('/api/keys/:id', async (req, res) => {
         return;
     }
     try {
-        await revokeApiKey(id);
+        await revokeApiKey(id, account.id);
         res.json({ revoked: true });
     }
     catch (err) {
         const e = err;
+        if (e.notFound) {
+            res.status(404).json({ error: 'NOT_FOUND', message: 'API key not found or does not belong to this account' });
+            return;
+        }
         console.error('[api/keys] Failed to revoke key:', e.message);
         res.status(500).json({ error: 'INTERNAL_ERROR', message: 'Failed to revoke API key' });
     }
@@ -523,6 +573,10 @@ app.patch('/api/account', async (req, res) => {
     if (display_name !== undefined) {
         if (typeof display_name !== 'string' || display_name.trim().length === 0) {
             res.status(400).json({ error: 'BAD_REQUEST', message: 'display_name must be a non-empty string' });
+            return;
+        }
+        if (display_name.trim().length > 100) {
+            res.status(400).json({ error: 'BAD_REQUEST', message: 'display_name must be 100 characters or fewer' });
             return;
         }
         fields.display_name = display_name.trim();
@@ -568,6 +622,11 @@ app.post('/api/heirs', async (req, res) => {
     const { heir_email, heir_name, access_level } = req.body;
     if (typeof heir_email !== 'string' || !heir_email.trim()) {
         res.status(400).json({ error: 'BAD_REQUEST', message: 'heir_email is required' });
+        return;
+    }
+    // Basic email format check — prevents storing obviously invalid addresses
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(heir_email.trim())) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'heir_email must be a valid email address' });
         return;
     }
     if (typeof heir_name !== 'string' || !heir_name.trim()) {
@@ -739,6 +798,10 @@ app.post('/api/moments/:block_id/decrypt', async (req, res) => {
         res.status(500).json({ error: code, message });
     }
 });
+// TODO [MEDIUM]: Replace the _currentRequest global with AsyncLocalStorage so
+//   concurrent requests can never bleed context into each other. The WeakMap
+//   context store already scopes data correctly per-request, but the global
+//   _currentRequest variable is not concurrency-safe under high load.
 // ── MCP endpoint ───────────────────────────────────────────────────────────
 app.post('/mcp', async (req, res, next) => {
     const body = req.body;

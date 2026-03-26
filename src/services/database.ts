@@ -135,9 +135,14 @@ export async function listMoments(
   if (opts.phase) query = query.eq('phase', opts.phase);
   if (opts.category) query = query.eq('category', opts.category);
   if (opts.search) {
-    query = query.or(
-      `title.ilike.%${opts.search}%,description.ilike.%${opts.search}%`
-    );
+    // Strip PostgREST filter-syntax characters to prevent filter injection.
+    // Allowed through: alphanumerics, spaces, and common punctuation.
+    const safeSearch = opts.search.replace(/[%_,()[\]'"\\]/g, '');
+    if (safeSearch) {
+      query = query.or(
+        `title.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%`
+      );
+    }
   }
 
   // Eclipse sealed filter: sealed = category is 'eclipse' AND reveal date is in the future
@@ -396,15 +401,19 @@ export async function listApiKeys(accountId: string): Promise<ApiKey[]> {
   return (data ?? []) as ApiKey[];
 }
 
-export async function revokeApiKey(keyId: string): Promise<void> {
+export async function revokeApiKey(keyId: string, accountId: string): Promise<void> {
   const supabase = getSupabase();
 
-  const { error } = await supabase
+  // accountId filter prevents any authenticated user from revoking another account's keys
+  const { data, error } = await supabase
     .from('api_keys')
     .update({ revoked_at: new Date().toISOString() })
-    .eq('id', keyId);
+    .eq('id', keyId)
+    .eq('account_id', accountId)
+    .select('id');
 
   if (error) throw new Error(`Failed to revoke API key: ${error.message}`);
+  if (!data || data.length === 0) throw Object.assign(new Error('Key not found'), { notFound: true });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

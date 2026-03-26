@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 build/
+# Note: dist/ is intentionally tracked — Railway deploys from compiled output.
+# TODO [LOW]: Configure Railway build step (npm run build) and then add dist/ here.
 
 # Environment variables
 .env

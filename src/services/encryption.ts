@@ -44,6 +44,18 @@ export interface EncryptResult {
   accConditions: string; // JSON-stringified ACC array (stored in DB + metadata)
 }
 
+// TODO [HIGH]: npm audit reports 32 vulnerabilities (12 high) in @lit-protocol
+//   transitive deps (ethers v5 + ws). The auto-fix requires breaking changes to
+//   @lit-protocol versions. Evaluate upgrading to @lit-protocol v8 (auth-helpers
+//   8.0.0+) and run a full regression test on encrypt/decrypt before deploying.
+// TODO [MEDIUM]: Migrate to full client-side Lit decryption so the server never
+//   holds plaintext. The server wallet is currently an OR condition in every ACC,
+//   meaning a compromised server key exposes all encrypted moments. Target: user's
+//   own wallet signs the Lit session in-browser; server is removed from all ACCs.
+// TODO [LOW]: Never log decrypted media or encryption key material — current
+//   logLitError() only logs error objects, but audit this if debug logging is
+//   ever expanded.
+
 // ── Logging helper ────────────────────────────────────────────────────────────
 
 function logLitError(label: string, err: unknown): void {

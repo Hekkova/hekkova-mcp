@@ -1,5 +1,73 @@
 import { z } from 'zod';
+import dns from 'dns/promises';
 import { executeMint } from './mint-moment.js';
+// ─────────────────────────────────────────────────────────────────────────────
+// SSRF protection — block requests to private/loopback address ranges
+// ─────────────────────────────────────────────────────────────────────────────
+const PRIVATE_IP_PATTERNS = [
+    /^127\./, // loopback
+    /^0\./, // 0.0.0.0/8
+    /^10\./, // RFC 1918
+    /^172\.(1[6-9]|2\d|3[01])\./, // RFC 1918 172.16-31.x.x
+    /^192\.168\./, // RFC 1918
+    /^169\.254\./, // link-local (AWS metadata etc.)
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // CGNAT RFC 6598
+    /^::1$/, // IPv6 loopback
+    /^fc00:/i, // IPv6 unique-local
+    /^fd[0-9a-f]{2}:/i, // IPv6 unique-local
+    /^fe80:/i, // IPv6 link-local
+];
+function isPrivateIp(ip) {
+    return PRIVATE_IP_PATTERNS.some((p) => p.test(ip));
+}
+/**
+ * Throws if the given URL resolves to a private/loopback address.
+ * Protects against SSRF attacks targeting internal services.
+ */
+async function assertPublicUrl(rawUrl) {
+    let parsed;
+    try {
+        parsed = new URL(rawUrl);
+    }
+    catch {
+        const err = new Error('Invalid URL');
+        err.code = 'INVALID_URL';
+        throw err;
+    }
+    // Block non-http(s) schemes (file://, ftp://, etc.)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        const err = new Error(`URL scheme not allowed: ${parsed.protocol}`);
+        err.code = 'INVALID_URL';
+        throw err;
+    }
+    const hostname = parsed.hostname;
+    // Reject bare IP addresses that are obviously private
+    if (isPrivateIp(hostname)) {
+        const err = new Error('URL resolves to a private or reserved address');
+        err.code = 'INVALID_URL';
+        throw err;
+    }
+    // DNS-resolve the hostname and check all returned IPs
+    try {
+        const addresses = await dns.resolve(hostname);
+        for (const addr of addresses) {
+            if (isPrivateIp(addr)) {
+                const err = new Error('URL resolves to a private or reserved address');
+                err.code = 'INVALID_URL';
+                throw err;
+            }
+        }
+    }
+    catch (err) {
+        const e = err;
+        if (e.code === 'INVALID_URL')
+            throw err; // re-throw our own error
+        // DNS resolution failure — block the request
+        const fetchErr = new Error(`Failed to resolve hostname: ${hostname}`);
+        fetchErr.code = 'URL_FETCH_FAILED';
+        throw fetchErr;
+    }
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +147,8 @@ function extractPageTitle(html) {
 }
 async function fetchAndExtract(url, titleOverride) {
     const userAgent = 'Mozilla/5.0 (compatible; Hekkova-MCP/1.0; +https://hekkova.com)';
+    // SSRF guard — must run before any network I/O
+    await assertPublicUrl(url);
     let response;
     try {
         response = await fetch(url, {
@@ -124,9 +194,10 @@ async function fetchAndExtract(url, titleOverride) {
         const base64 = Buffer.from(textContent).toString('base64');
         return { media: base64, mediaType: 'text/plain', title, platform };
     }
-    // Fetch og:image
+    // Fetch og:image — also SSRF-guarded
     let imageResponse;
     try {
+        await assertPublicUrl(ogImage);
         imageResponse = await fetch(ogImage, {
             headers: { 'User-Agent': userAgent },
         });

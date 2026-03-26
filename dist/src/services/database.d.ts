@@ -40,7 +40,7 @@ export declare function verifySupabaseToken(token: string): Promise<{
 export declare function insertAccount(id: string, displayName: string): Promise<Account>;
 export declare function createApiKey(accountId: string, keyHash: string, keyPrefix: string): Promise<ApiKey>;
 export declare function listApiKeys(accountId: string): Promise<ApiKey[]>;
-export declare function revokeApiKey(keyId: string): Promise<void>;
+export declare function revokeApiKey(keyId: string, accountId: string): Promise<void>;
 export declare function addHeir(accountId: string, heirEmail: string, heirName: string, accessLevel: 'full' | 'read_only'): Promise<Heir>;
 export declare function listHeirs(accountId: string): Promise<Heir[]>;
 export declare function updateHeirAccessLevel(heirId: string, accountId: string, accessLevel: 'full' | 'read_only'): Promise<Heir>;

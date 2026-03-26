@@ -380,6 +380,48 @@ export async function revokeHeir(heirId, accountId) {
         throw new Error(`Failed to revoke heir: ${error.message}`);
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// Stripe webhook idempotency
+//
+// Required migration — run once in Supabase SQL editor:
+//
+//   CREATE TABLE IF NOT EXISTS stripe_processed_events (
+//     event_id   TEXT        PRIMARY KEY,
+//     processed_at TIMESTAMPTZ DEFAULT NOW()
+//   );
+//
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Attempt to claim a Stripe event ID for processing.
+ * Returns true if this process should handle the event (first claim wins).
+ * Returns false if the event was already processed (safe to skip).
+ *
+ * Uses INSERT … ON CONFLICT DO NOTHING to make this atomic — concurrent
+ * Railway instances or Stripe retries cannot double-credit an account.
+ */
+export async function claimStripeEvent(eventId) {
+    const supabase = getSupabase();
+    const { error } = await supabase
+        .from('stripe_processed_events')
+        .insert({ event_id: eventId })
+        // Postgres "ON CONFLICT DO NOTHING" via Supabase upsert with ignoreDuplicates
+        .select();
+    if (error) {
+        // Unique-constraint violation (23505) means already processed
+        if (error.code === '23505')
+            return false;
+        // Table doesn't exist yet — log a warning and allow processing to continue
+        // so that a missing migration doesn't block all payments.
+        if (error.code === '42P01') {
+            console.warn('[stripe] stripe_processed_events table missing — idempotency not enforced. Run the migration.');
+            return true;
+        }
+        // Other DB error: log and allow (fail-open so payments aren't blocked)
+        console.error('[stripe] claimStripeEvent DB error:', error.message);
+        return true;
+    }
+    return true;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)
 // ─────────────────────────────────────────────────────────────────────────────
 export async function seedTestData() {

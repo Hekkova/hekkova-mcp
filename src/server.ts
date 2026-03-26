@@ -24,7 +24,7 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir, getMomentByBlockId } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir, getMomentByBlockId, claimStripeEvent } from './services/database.js';
 import { decryptContent } from './services/encryption.js';
 import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
@@ -33,24 +33,110 @@ import * as crypto from 'crypto';
 // In-memory rate limiter
 // TODO [MEDIUM]: Replace with Redis-backed rate limiter (e.g. ioredis + sliding
 //   window) so limits survive server restarts and work across multiple replicas.
-// TODO [MEDIUM]: Add a separate auth-failure rate limiter keyed by IP address
-//   to throttle API key brute-force attempts before account context is known.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
+// ─────────────────────────────────────────────────────────────────────────────
+// IP-based auth-failure throttle
+//
+// Tracks consecutive authentication failures per IP address. After
+// MAX_AUTH_FAILURES failures in AUTH_FAILURE_WINDOW_MS, that IP is blocked
+// for AUTH_BLOCK_DURATION_MS. This prevents API key brute-force attempts
+// before account context is known.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_AUTH_FAILURES = 10;         // failures allowed per window
+const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
+const AUTH_BLOCK_DURATION_MS = 300_000; // 5-minute block after threshold
+
+interface AuthFailureEntry {
+  failures: number;
+  windowStart: number;
+  blockedUntil: number;
 }
 
-interface MintRateLimitEntry {
-  count: number;
-  resetAt: number;
+const authFailureMap = new Map<string, AuthFailureEntry>();
+
+function getClientIp(req: Request): string {
+  // Trust X-Forwarded-For from Railway's proxy; fall back to socket address
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') return forwarded.split(',')[0].trim();
+  return req.socket.remoteAddress ?? 'unknown';
 }
 
-const generalLimits = new Map<string, RateLimitEntry>();
-const mintLimits = new Map<string, MintRateLimitEntry>();
+function recordAuthFailure(ip: string): { blocked: boolean; retryAfter: number } {
+  const now = Date.now();
+  let entry = authFailureMap.get(ip);
+
+  if (!entry || now > entry.windowStart + AUTH_FAILURE_WINDOW_MS) {
+    entry = { failures: 0, windowStart: now, blockedUntil: 0 };
+  }
+
+  // Already blocked
+  if (entry.blockedUntil > now) {
+    return { blocked: true, retryAfter: Math.ceil((entry.blockedUntil - now) / 1000) };
+  }
+
+  entry.failures += 1;
+
+  if (entry.failures >= MAX_AUTH_FAILURES) {
+    entry.blockedUntil = now + AUTH_BLOCK_DURATION_MS;
+    authFailureMap.set(ip, entry);
+    return { blocked: true, retryAfter: Math.ceil(AUTH_BLOCK_DURATION_MS / 1000) };
+  }
+
+  authFailureMap.set(ip, entry);
+  return { blocked: false, retryAfter: 0 };
+}
+
+function isAuthBlocked(ip: string): { blocked: boolean; retryAfter: number } {
+  const now = Date.now();
+  const entry = authFailureMap.get(ip);
+  if (!entry || entry.blockedUntil <= now) return { blocked: false, retryAfter: 0 };
+  return { blocked: true, retryAfter: Math.ceil((entry.blockedUntil - now) / 1000) };
+}
+
+function clearAuthFailures(ip: string): void {
+  authFailureMap.delete(ip);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rate limiter — Redis-backed with in-memory fallback
+//
+// Set REDIS_URL (Railway Redis plugin) to get limits that survive deploys and
+// are shared across all server instances. Without it, behaviour is identical
+// to before: in-memory, per-process, reset on restart.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { Redis } from 'ioredis';
+
+let _redis: Redis | null = null;
+
+function getRedis(): Redis | null {
+  if (_redis) return _redis;
+  if (!config.redisUrl) return null;
+  try {
+    _redis = new Redis(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 1 });
+    _redis.on('error', (err: Error) => {
+      console.warn('[redis] connection error — falling back to in-memory:', err.message);
+      _redis = null;
+    });
+    return _redis;
+  } catch {
+    return null;
+  }
+}
+
+interface RateLimitEntry { count: number; resetAt: number }
+const _memLimits = new Map<string, RateLimitEntry>();
 
 const WINDOW_MS = 60 * 1000; // 1 minute
+
+interface RateLimitResult {
+  allowed: boolean;
+  remaining: number;
+  limit: number;
+  resetAt: number;
+}
 
 function getGeneralLimit(accountContext: AccountContext): number {
   if (accountContext.apiKey.environment === 'test') return 10;
@@ -64,42 +150,38 @@ function getMintLimit(accountContext: AccountContext): number {
   return 10;
 }
 
-interface RateLimitResult {
-  allowed: boolean;
-  remaining: number;
-  limit: number;
-  resetAt: number;
-}
-
-function checkRateLimit(
-  accountId: string,
-  limitMap: Map<string, RateLimitEntry>,
-  limit: number
-): RateLimitResult {
+async function checkRateLimit(key: string, limit: number): Promise<RateLimitResult> {
+  const redis = getRedis();
   const now = Date.now();
-  let entry = limitMap.get(accountId);
+  const windowEnd = now + WINDOW_MS;
 
+  if (redis) {
+    try {
+      const redisKey = `rl:${key}`;
+      const pipeline = redis.pipeline();
+      pipeline.incr(redisKey);
+      pipeline.pttl(redisKey);
+      const results = await pipeline.exec() as [[Error | null, number], [Error | null, number]];
+      const count = results[0][1];
+      const ttl = results[1][1];
+      if (ttl < 0) await redis.pexpire(redisKey, WINDOW_MS);
+      const resetAt = ttl > 0 ? now + ttl : windowEnd;
+      if (count > limit) return { allowed: false, remaining: 0, limit, resetAt };
+      return { allowed: true, remaining: limit - count, limit, resetAt };
+    } catch (err) {
+      console.warn('[redis] checkRateLimit error, using in-memory fallback:', (err as Error).message);
+    }
+  }
+
+  // In-memory fallback
+  let entry = _memLimits.get(key);
   if (!entry || now > entry.resetAt) {
-    entry = { count: 0, resetAt: now + WINDOW_MS };
-    limitMap.set(accountId, entry);
+    entry = { count: 0, resetAt: windowEnd };
+    _memLimits.set(key, entry);
   }
-
-  if (entry.count >= limit) {
-    return {
-      allowed: false,
-      remaining: 0,
-      limit,
-      resetAt: entry.resetAt,
-    };
-  }
-
+  if (entry.count >= limit) return { allowed: false, remaining: 0, limit, resetAt: entry.resetAt };
   entry.count++;
-  return {
-    allowed: true,
-    remaining: limit - entry.count,
-    limit,
-    resetAt: entry.resetAt,
-  };
+  return { allowed: true, remaining: limit - entry.count, limit, resetAt: entry.resetAt };
 }
 
 function applyRateLimitHeaders(res: Response, result: RateLimitResult): void {
@@ -445,6 +527,14 @@ app.post(
     try {
       if (event.type === 'checkout.session.completed') {
         const session = event.data.object;
+
+        // Idempotency guard — Stripe retries webhooks on 5xx; skip if already processed
+        const claimed = await claimStripeEvent(event.id);
+        if (!claimed) {
+          console.log(`[stripe] Event ${event.id} already processed — skipping`);
+          res.json({ received: true });
+          return;
+        }
 
         console.log('[stripe] checkout.session.completed — full session metadata:', JSON.stringify(session.metadata));
         console.log('[stripe] client_reference_id:', session.client_reference_id);
@@ -1016,22 +1106,43 @@ app.post(
     }
 
     // 2. Authenticate all other requests
+    const clientIp = getClientIp(req);
+
+    // Check if this IP is currently blocked for too many auth failures
+    const ipCheck = isAuthBlocked(clientIp);
+    if (ipCheck.blocked) {
+      res.status(429).json({
+        error: 'AUTH_BLOCKED',
+        message: `Too many failed authentication attempts. Retry after ${ipCheck.retryAfter} seconds.`,
+        retry_after: ipCheck.retryAfter,
+      });
+      return;
+    }
+
     let accountContext: AccountContext;
     try {
       accountContext = await validateApiKey(req.headers.authorization);
+      // Successful auth — clear any accumulated failure count for this IP
+      clearAuthFailures(clientIp);
     } catch (err) {
       const e = err as Error & { code?: string };
-      res.status(401).json({ error: 'UNAUTHORIZED', message: e.message });
+      // Record the failure and potentially block the IP
+      const failResult = recordAuthFailure(clientIp);
+      if (failResult.blocked) {
+        res.status(429).json({
+          error: 'AUTH_BLOCKED',
+          message: `Too many failed authentication attempts. Retry after ${failResult.retryAfter} seconds.`,
+          retry_after: failResult.retryAfter,
+        });
+      } else {
+        res.status(401).json({ error: 'UNAUTHORIZED', message: e.message });
+      }
       return;
     }
 
     // 2. General rate limiting
     const generalLimit = getGeneralLimit(accountContext);
-    const generalResult = checkRateLimit(
-      accountContext.account.id,
-      generalLimits,
-      generalLimit
-    );
+    const generalResult = await checkRateLimit(accountContext.account.id, generalLimit);
     applyRateLimitHeaders(res, generalResult);
 
     if (!generalResult.allowed) {
@@ -1051,11 +1162,7 @@ app.post(
 
     if (isMintCall) {
       const mintLimit = getMintLimit(accountContext);
-      const mintResult = checkRateLimit(
-        accountContext.account.id + ':mint',
-        mintLimits,
-        mintLimit
-      );
+      const mintResult = await checkRateLimit(accountContext.account.id + ':mint', mintLimit);
 
       if (!mintResult.allowed) {
         const retryAfter = Math.ceil((mintResult.resetAt - Date.now()) / 1000);

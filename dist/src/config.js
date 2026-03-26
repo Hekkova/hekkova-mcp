@@ -35,6 +35,8 @@ export const config = {
     // ── Stripe ───────────────────────────────────────────────────────────────
     stripeSecretKey: required('STRIPE_SECRET_KEY'),
     stripeWebhookSecret: required('STRIPE_WEBHOOK_SECRET'),
+    // ── Redis (optional — enables persistent rate limiting across deploys) ────
+    redisUrl: process.env['REDIS_URL'] ?? '',
     // ── Static URLs ───────────────────────────────────────────────────────────
     purchaseUrl: 'https://hekkova.com/dashboard/billing',
     dashboardKeysUrl: 'https://hekkova.com/dashboard/keys',

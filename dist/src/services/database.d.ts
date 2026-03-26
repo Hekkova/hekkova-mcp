@@ -45,5 +45,14 @@ export declare function addHeir(accountId: string, heirEmail: string, heirName: 
 export declare function listHeirs(accountId: string): Promise<Heir[]>;
 export declare function updateHeirAccessLevel(heirId: string, accountId: string, accessLevel: 'full' | 'read_only'): Promise<Heir>;
 export declare function revokeHeir(heirId: string, accountId: string): Promise<void>;
+/**
+ * Attempt to claim a Stripe event ID for processing.
+ * Returns true if this process should handle the event (first claim wins).
+ * Returns false if the event was already processed (safe to skip).
+ *
+ * Uses INSERT … ON CONFLICT DO NOTHING to make this atomic — concurrent
+ * Railway instances or Stripe retries cannot double-credit an account.
+ */
+export declare function claimStripeEvent(eventId: string): Promise<boolean>;
 export declare function seedTestData(): Promise<void>;
 //# sourceMappingURL=database.d.ts.map

@@ -1,7 +1,7 @@
 import { LitNodeClientNodeJs } from '@lit-protocol/lit-node-client';
 import { LIT_ABILITY } from '@lit-protocol/constants';
 import { encryptString, decryptToString } from '@lit-protocol/encryption';
-import { LitAccessControlConditionResource, createSiweMessageWithRecaps, generateAuthSig, } from '@lit-protocol/auth-helpers';
+import { LitAccessControlConditionResource, createSiweMessageWithResources, generateAuthSig, } from '@lit-protocol/auth-helpers';
 import { ethers } from 'ethers';
 import { config } from '../config.js';
 // TODO [HIGH]: npm audit reports 32 vulnerabilities (12 high) in @lit-protocol
@@ -85,6 +85,7 @@ async function getServerSessionSigs(litClient) {
         expiration: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
         resourceAbilityRequests: [
             {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 resource: new LitAccessControlConditionResource('*'),
                 ability: LIT_ABILITY.AccessControlConditionDecryption,
             },
@@ -92,13 +93,13 @@ async function getServerSessionSigs(litClient) {
         authNeededCallback: async ({ uri, expiration, resourceAbilityRequests, }) => {
             console.log(`[lit] authNeededCallback | uri=${uri}`);
             try {
-                const toSign = await createSiweMessageWithRecaps({
+                const toSign = await createSiweMessageWithResources({
                     uri: uri ?? 'https://hekkova.com',
                     expiration: expiration ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     resources: resourceAbilityRequests,
                     walletAddress: wallet.address,
                     nonce: await litClient.getLatestBlockhash(),
-                    litNodeClient: litClient,
                     domain: 'hekkova.com',
                     statement: 'Hekkova server signing for Lit Protocol encryption.',
                 });

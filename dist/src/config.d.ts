@@ -15,6 +15,7 @@ export declare const config: {
     readonly litNetwork: string;
     readonly stripeSecretKey: string;
     readonly stripeWebhookSecret: string;
+    readonly redisUrl: string;
     readonly purchaseUrl: "https://hekkova.com/dashboard/billing";
     readonly dashboardKeysUrl: "https://hekkova.com/dashboard/keys";
 };

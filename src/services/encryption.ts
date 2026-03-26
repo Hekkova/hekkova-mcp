@@ -3,7 +3,7 @@ import { LIT_ABILITY } from '@lit-protocol/constants';
 import { encryptString, decryptToString } from '@lit-protocol/encryption';
 import {
   LitAccessControlConditionResource,
-  createSiweMessageWithRecaps,
+  createSiweMessageWithResources,
   generateAuthSig,
 } from '@lit-protocol/auth-helpers';
 import { ethers } from 'ethers';
@@ -135,7 +135,8 @@ async function getServerSessionSigs(litClient: LitNodeClientNodeJs) {
     expiration: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
     resourceAbilityRequests: [
       {
-        resource: new LitAccessControlConditionResource('*'),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        resource: new LitAccessControlConditionResource('*') as any,
         ability: LIT_ABILITY.AccessControlConditionDecryption,
       },
     ],
@@ -150,13 +151,13 @@ async function getServerSessionSigs(litClient: LitNodeClientNodeJs) {
     }) => {
       console.log(`[lit] authNeededCallback | uri=${uri}`);
       try {
-        const toSign = await createSiweMessageWithRecaps({
+        const toSign = await createSiweMessageWithResources({
           uri: uri ?? 'https://hekkova.com',
           expiration: expiration ?? new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-          resources: resourceAbilityRequests as Parameters<typeof createSiweMessageWithRecaps>[0]['resources'],
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          resources: resourceAbilityRequests as any,
           walletAddress: wallet.address,
           nonce: await litClient.getLatestBlockhash(),
-          litNodeClient: litClient,
           domain: 'hekkova.com',
           statement: 'Hekkova server signing for Lit Protocol encryption.',
         });

@@ -244,7 +244,7 @@ function createMcpServer(): McpServer {
   // ── mint_moment ────────────────────────────────────────────────────────────
   server.tool(
     'mint_moment',
-    'Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID.',
+    'Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID. Minting a new moment at any phase (including Full Moon) costs one mint credit — there is no additional fee for any phase on new mints. The $0.49 Phase Shift fee only applies when changing an existing moment\'s phase via the update_phase tool.',
     {
       title: z.string().max(200).describe('Name of the moment'),
       media: z.string().describe('Base64-encoded media content (photo, video, audio, or text). Max 50MB.'),

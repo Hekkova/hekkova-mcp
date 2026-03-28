@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import sharp from 'sharp';
 import { encryptForPhase, shouldEncrypt } from '../services/encryption.js';
 import { pinMedia, pinMetadata } from '../services/storage.js';
 import { mintNFT } from '../services/blockchain.js';
@@ -49,6 +50,39 @@ function base64DecodedSize(base64: string): number {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Image compression threshold: 500 KB (binary)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const COMPRESS_THRESHOLD_BYTES = 500 * 1024; // 500 KB
+const COMPRESS_MAX_PX = 1024;
+const COMPRESS_QUALITY = 80;
+
+/**
+ * If the image is larger than 500 KB, resize to max 1024px on the longest
+ * side and re-encode as JPEG at 80% quality. Returns the (possibly updated)
+ * base64 string and the effective media_type.
+ */
+async function maybeCompressImage(
+  base64: string,
+  mediaType: string
+): Promise<{ base64: string; mediaType: string }> {
+  const isImage = mediaType.startsWith('image/') && mediaType !== 'image/gif';
+  if (!isImage) return { base64, mediaType };
+
+  const raw = base64.includes(',') ? base64.split(',')[1] : base64;
+  const binarySize = base64DecodedSize(base64);
+  if (binarySize <= COMPRESS_THRESHOLD_BYTES) return { base64: raw, mediaType };
+
+  const buffer = Buffer.from(raw, 'base64');
+  const compressed = await sharp(buffer)
+    .resize(COMPRESS_MAX_PX, COMPRESS_MAX_PX, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: COMPRESS_QUALITY })
+    .toBuffer();
+
+  return { base64: compressed.toString('base64'), mediaType: 'image/jpeg' };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Core mint logic (shared by mint-moment and mint-from-url)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -86,7 +120,12 @@ export async function executeMint(
     }
   }
 
-  // 2. Validate media size
+  // 2. Compress image if over threshold, then validate size
+  const { base64: compressedMedia, mediaType: effectiveMediaType } =
+    await maybeCompressImage(input.media, input.media_type);
+  // Mutate input so downstream steps use the compressed version
+  input = { ...input, media: compressedMedia, media_type: effectiveMediaType as typeof input.media_type };
+
   const binarySize = base64DecodedSize(input.media);
   if (binarySize > MAX_MEDIA_BYTES) {
     const err = new Error(

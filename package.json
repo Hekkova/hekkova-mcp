@@ -30,6 +30,7 @@
     "ethers": "^5.8.0",
     "express": "^4.21.2",
     "ioredis": "^5.10.1",
+    "multer": "^1.4.5-lts.2",
     "sharp": "^0.34.5",
     "stripe": "^20.4.1",
     "ts-node": "^10.9.2",
@@ -39,6 +40,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@types/multer": "^1.4.12",
     "@types/sharp": "^0.31.1",
     "nodemon": "^3.1.9",
     "tsx": "^4.19.3"

@@ -53,7 +53,7 @@ function base64DecodedSize(base64: string): number {
 // Image compression threshold: 500 KB (binary)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COMPRESS_THRESHOLD_BYTES = 500 * 1024; // 500 KB
+const COMPRESS_THRESHOLD_BYTES = 200 * 1024; // 200 KB
 const COMPRESS_MAX_PX = 1024;
 const COMPRESS_QUALITY = 80;
 
@@ -127,6 +127,18 @@ export async function executeMint(
   input = { ...input, media: compressedMedia, media_type: effectiveMediaType as typeof input.media_type };
 
   const binarySize = base64DecodedSize(input.media);
+
+  // Video and audio over 10MB will timeout through MCP base64 transport
+  const isVideoOrAudio = input.media_type.startsWith('video/') || input.media_type.startsWith('audio/');
+  if (isVideoOrAudio && binarySize > 10 * 1024 * 1024) {
+    const err = new Error(
+      `Video and audio files over 10MB cannot be sent via base64 transport (received ${(binarySize / 1024 / 1024).toFixed(1)}MB). ` +
+      `Use mint_from_url with a public URL, or upload directly at https://mcp.hekkova.com/api/upload.`
+    ) as Error & { code: string };
+    err.code = 'MEDIA_TOO_LARGE';
+    throw err;
+  }
+
   if (binarySize > MAX_MEDIA_BYTES) {
     const err = new Error(
       `Media exceeds 50MB limit (received ${(binarySize / 1024 / 1024).toFixed(1)}MB)`

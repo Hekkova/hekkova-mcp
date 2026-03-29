@@ -14,7 +14,9 @@ import { z } from 'zod';
 
 import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
-import { handleMintMoment } from './tools/mint-moment.js';
+import multer from 'multer';
+import { handleMintMoment, executeMint } from './tools/mint-moment.js';
+import type { MintMomentInput } from './tools/mint-moment.js';
 import { handleMintFromUrl } from './tools/mint-from-url.js';
 import { handleListMoments } from './tools/list-moments.js';
 import { handleGetMoment } from './tools/get-moment.js';
@@ -22,7 +24,7 @@ import { handleUpdatePhase } from './tools/update-phase.js';
 import { handleExportMoments } from './tools/export-moments.js';
 import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
-import type { AccountContext } from './types/index.js';
+import type { AccountContext, ApiKey } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
 import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir, getMomentByBlockId, claimStripeEvent } from './services/database.js';
 import { decryptContent } from './services/encryption.js';
@@ -244,7 +246,7 @@ function createMcpServer(): McpServer {
   // ── mint_moment ────────────────────────────────────────────────────────────
   server.tool(
     'mint_moment',
-    'Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID. Minting a new moment at any phase (including Full Moon) costs one mint credit — there is no additional fee for any phase on new mints. The $0.49 Phase Shift fee only applies when changing an existing moment\'s phase via the update_phase tool.',
+    'For small text and images under 200KB. For larger files, use mint_from_url with a public URL or the direct upload endpoint at https://mcp.hekkova.com/api/upload. Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID. Minting a new moment at any phase (including Full Moon) costs one mint credit — there is no additional fee for any phase on new mints. The $0.49 Phase Shift fee only applies when changing an existing moment\'s phase via the update_phase tool.',
     {
       title: z.string().max(200).describe('Name of the moment'),
       media: z.string().describe('Base64-encoded media content (photo, video, audio, or text). Max 50MB.'),
@@ -433,6 +435,36 @@ function createMcpServer(): McpServer {
     }
   );
 
+  // ── upload_file ────────────────────────────────────────────────────────────
+  server.tool(
+    'upload_file',
+    'For large files (images, videos, audio) that are too big for base64 transport, use the direct upload endpoint at https://mcp.hekkova.com/api/upload. Send as multipart/form-data with the file and metadata fields.',
+    {},
+    async () => {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            upload_url: 'https://mcp.hekkova.com/api/upload',
+            method: 'POST',
+            content_type: 'multipart/form-data',
+            authentication: 'Bearer <api_key> in Authorization header',
+            fields: {
+              file: 'The binary file to upload (required)',
+              title: 'Name of the moment (required, max 200 chars)',
+              phase: 'Privacy phase: new_moon | crescent | gibbous | full_moon (default: new_moon)',
+              category: 'Optional: super_moon | blue_moon | super_blue_moon | eclipse',
+              description: 'Optional description (max 2000 chars)',
+              tags: 'Optional JSON array string, e.g. ["tag1","tag2"]',
+            },
+            max_file_size: '50MB',
+            note: 'Returns the same response as mint_moment.',
+          }, null, 2),
+        }],
+      };
+    }
+  );
+
   // ── get_account ────────────────────────────────────────────────────────────
   server.tool(
     'get_account',
@@ -584,6 +616,183 @@ app.use(express.json({ limit: '100mb' })); // allow large base64 payloads
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', version: '1.0.0' });
 });
+
+// ── Direct file upload — multipart/form-data, max 50MB ───────────────────
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+const VALID_UPLOAD_PHASES = ['new_moon', 'crescent', 'gibbous', 'full_moon'] as const;
+const VALID_UPLOAD_CATEGORIES = ['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse', ''] as const;
+const VALID_UPLOAD_MEDIA_TYPES = [
+  'image/png', 'image/jpeg', 'image/gif',
+  'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain',
+] as const;
+
+app.post(
+  '/api/upload',
+  upload.single('file'),
+  async (req: Request, res: Response): Promise<void> => {
+    // 1. Authenticate — API key first, then Supabase JWT
+    let accountContext: AccountContext;
+    const clientIp = getClientIp(req);
+
+    const ipCheck = isAuthBlocked(clientIp);
+    if (ipCheck.blocked) {
+      res.status(429).json({
+        error: 'AUTH_BLOCKED',
+        message: `Too many failed authentication attempts. Retry after ${ipCheck.retryAfter} seconds.`,
+        retry_after: ipCheck.retryAfter,
+      });
+      return;
+    }
+
+    try {
+      accountContext = await validateApiKey(req.headers.authorization);
+      clearAuthFailures(clientIp);
+    } catch {
+      try {
+        const account = await requireSupabaseAuth(req.headers.authorization);
+        clearAuthFailures(clientIp);
+        const stubApiKey: ApiKey = {
+          id: 'supabase-upload',
+          account_id: account.id,
+          key_hash: '',
+          key_prefix: 'supabase',
+          environment: 'live',
+          created_at: new Date().toISOString(),
+          revoked_at: null,
+        };
+        accountContext = {
+          account,
+          apiKey: stubApiKey,
+        };
+      } catch {
+        const failResult = recordAuthFailure(clientIp);
+        if (failResult.blocked) {
+          res.status(429).json({
+            error: 'AUTH_BLOCKED',
+            message: `Too many failed authentication attempts. Retry after ${failResult.retryAfter} seconds.`,
+            retry_after: failResult.retryAfter,
+          });
+        } else {
+          res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+        }
+        return;
+      }
+    }
+
+    // 2. Rate limiting (same mint limits as MCP endpoint)
+    const generalLimit = getGeneralLimit(accountContext);
+    const generalResult = await checkRateLimit(accountContext.account.id, generalLimit);
+    applyRateLimitHeaders(res, generalResult);
+    if (!generalResult.allowed) {
+      const retryAfter = Math.ceil((generalResult.resetAt - Date.now()) / 1000);
+      res.status(429).json({ error: 'RATE_LIMITED', message: `Too many requests. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
+      return;
+    }
+    const mintLimit = getMintLimit(accountContext);
+    const mintResult = await checkRateLimit(accountContext.account.id + ':mint', mintLimit);
+    if (!mintResult.allowed) {
+      const retryAfter = Math.ceil((mintResult.resetAt - Date.now()) / 1000);
+      res.status(429).json({ error: 'RATE_LIMITED', message: `Mint rate limit exceeded. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
+      return;
+    }
+
+    // 3. Validate file
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'No file uploaded. Send the file in a multipart/form-data field named "file".' });
+      return;
+    }
+
+    // 4. Validate and extract form fields
+    const body = req.body as Record<string, string>;
+    const title = body['title']?.trim();
+    if (!title) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'title is required' });
+      return;
+    }
+    if (title.length > 200) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
+      return;
+    }
+
+    const phase = (body['phase'] ?? 'new_moon') as typeof VALID_UPLOAD_PHASES[number];
+    if (!VALID_UPLOAD_PHASES.includes(phase)) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: `phase must be one of: ${VALID_UPLOAD_PHASES.join(', ')}` });
+      return;
+    }
+
+    const rawCategory = body['category'] ?? '';
+    const category = (rawCategory === '' ? null : rawCategory) as MintMomentInput['category'];
+    if (rawCategory && !VALID_UPLOAD_CATEGORIES.includes(rawCategory as typeof VALID_UPLOAD_CATEGORIES[number])) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: `category must be one of: super_moon, blue_moon, super_blue_moon, eclipse` });
+      return;
+    }
+
+    const description = body['description']?.trim();
+    if (description && description.length > 2000) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'description must be 2000 characters or fewer' });
+      return;
+    }
+
+    let tags: string[] | undefined;
+    if (body['tags']) {
+      try {
+        tags = JSON.parse(body['tags']) as string[];
+        if (!Array.isArray(tags) || tags.length > 20) throw new Error();
+      } catch {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'tags must be a JSON array of strings with at most 20 items' });
+        return;
+      }
+    }
+
+    // Derive media_type from file mimetype; reject unsupported types
+    const mediaType = file.mimetype as MintMomentInput['media_type'];
+    if (!VALID_UPLOAD_MEDIA_TYPES.includes(mediaType as typeof VALID_UPLOAD_MEDIA_TYPES[number])) {
+      res.status(400).json({
+        error: 'INVALID_MEDIA_TYPE',
+        message: `Unsupported media type: ${file.mimetype}. Supported: ${VALID_UPLOAD_MEDIA_TYPES.join(', ')}`,
+      });
+      return;
+    }
+
+    // 5. Convert buffer to base64 (server-side only — no base64 in transport)
+    const base64Media = file.buffer.toString('base64');
+
+    // 6. Run the standard mint pipeline
+    const mintInput: MintMomentInput = {
+      title,
+      media: base64Media,
+      media_type: mediaType,
+      phase,
+      category,
+      description: description || undefined,
+      tags,
+    };
+
+    try {
+      const result = await executeMint(mintInput, accountContext);
+      res.status(201).json(result);
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      const code = e.code ?? 'INTERNAL_ERROR';
+      const statusMap: Record<string, number> = {
+        INVALID_INPUT: 400,
+        INVALID_MEDIA_TYPE: 400,
+        ECLIPSE_REQUIRES_LEGACY: 403,
+        ECLIPSE_MISSING_DATE: 400,
+        ECLIPSE_DATE_PAST: 400,
+        MEDIA_TOO_LARGE: 413,
+        INSUFFICIENT_BALANCE: 402,
+      };
+      const status = statusMap[code] ?? 500;
+      res.status(status).json({ error: code, message: e.message });
+    }
+  }
+);
 
 // ── Billing: create checkout session ───────────────────────────────────────
 app.post(

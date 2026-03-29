@@ -11,7 +11,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
+import multer from 'multer';
 import { handleMintMoment } from './tools/mint-moment.js';
+import { pinMedia, unpinFromPinata } from './services/storage.js';
+import { insertStagingUpload, getStagingUpload, deleteExpiredStagingUploads } from './services/database.js';
 import { handleMintFromUrl } from './tools/mint-from-url.js';
 import { handleListMoments } from './tools/list-moments.js';
 import { handleGetMoment } from './tools/get-moment.js';
@@ -199,7 +202,7 @@ function createMcpServer() {
         description: 'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored on IPFS (Filecoin archival coming soon).',
     });
     // ── mint_moment ────────────────────────────────────────────────────────────
-    server.tool('mint_moment', 'Mint a moment permanently to the blockchain. Encrypts media based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID.', {
+    server.tool('mint_moment', 'Mint text content permanently to the blockchain. For images, video, and audio, use upload_media followed by mint_from_url instead — base64 binary payloads are unreliable over MCP transport. Encrypts content based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID. Minting a new moment at any phase (including Full Moon) costs one mint credit — there is no additional fee for any phase on new mints. The $0.49 Phase Shift fee only applies when changing an existing moment\'s phase via the update_phase tool.', {
         title: z.string().max(200).describe('Name of the moment'),
         media: z.string().describe('Base64-encoded media content (photo, video, audio, or text). Max 50MB.'),
         media_type: z
@@ -362,6 +365,29 @@ function createMcpServer() {
             return { content: [{ type: 'text', text: JSON.stringify(mapped, null, 2) }], isError: true };
         }
     });
+    // ── upload_media ───────────────────────────────────────────────────────────
+    server.tool('upload_media', 'Upload a local file to Hekkova\'s temporary staging area. Returns a short-lived URL (valid 15 minutes) that you can pass to mint_from_url to mint the content. No mint credit is consumed. This is the recommended way to mint local images, video, and audio — do NOT use mint_moment for binary media.', {
+        file: z.string().describe('Base64-encoded file content'),
+        filename: z.string().describe('Original filename with extension (e.g., \'photo.jpg\')'),
+        content_type: z
+            .enum(['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav'])
+            .describe('MIME type of the file'),
+    }, async (input) => {
+        const req = _currentRequest;
+        if (!req)
+            throw new Error('No request context available');
+        const ctx = getRequestContext(req);
+        if (!ctx)
+            throw new Error('Not authenticated');
+        try {
+            const result = await executeStagingUpload(input.file, input.filename, input.content_type, ctx.account.id);
+            return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        catch (err) {
+            const mapped = errorToMcpResponse(err);
+            return { content: [{ type: 'text', text: JSON.stringify(mapped, null, 2) }], isError: true };
+        }
+    });
     // ── get_account ────────────────────────────────────────────────────────────
     server.tool('get_account', 'Get account details including Light ID, wallet address, and configuration.', {}, async (input) => {
         const req = _currentRequest;
@@ -483,6 +509,128 @@ app.use(express.json({ limit: '100mb' })); // allow large base64 payloads
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
     res.json({ status: 'ok', version: '1.0.0' });
+});
+// ── GET /staging/:key — serve staged files (no auth — UUID is the secret) ─
+app.get('/staging/:key', async (req, res) => {
+    const key = req.params['key'];
+    const staging = await getStagingUpload(key).catch(() => null);
+    if (!staging || new Date(staging.expires_at) < new Date()) {
+        res.status(404).json({ error: 'NOT_FOUND', message: 'Staging file not found or has expired.' });
+        return;
+    }
+    // Redirect to Pinata gateway — avoids proxying large files through our server
+    const gatewayUrl = `${config.pinataGateway}/ipfs/${staging.cid}`;
+    res.setHeader('Content-Type', staging.content_type);
+    res.redirect(302, gatewayUrl);
+});
+// ── Staging upload — pins to Pinata, returns a short-lived URL ───────────
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024 },
+});
+const STAGING_UPLOAD_TYPES = [
+    'image/png', 'image/jpeg', 'image/gif',
+    'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain',
+];
+const STAGING_UPLOAD_RATE_LIMIT = 10; // max per minute per account
+const STAGING_TTL_MS = 15 * 60 * 1000; // 15 minutes
+function contentTypeToExt(ct) {
+    const map = {
+        'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif',
+        'video/mp4': 'mp4', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'text/plain': 'txt',
+    };
+    return map[ct] ?? 'bin';
+}
+async function executeStagingUpload(fileBase64, filename, contentType, accountId) {
+    if (!STAGING_UPLOAD_TYPES.includes(contentType)) {
+        throw Object.assign(new Error(`Unsupported content_type: ${contentType}. Allowed: ${STAGING_UPLOAD_TYPES.join(', ')}`), { code: 'INVALID_MEDIA_TYPE' });
+    }
+    const raw = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
+    const buffer = Buffer.from(raw, 'base64');
+    if (buffer.length > 50 * 1024 * 1024) {
+        throw Object.assign(new Error('File exceeds 50MB limit after decoding'), { code: 'MEDIA_TOO_LARGE' });
+    }
+    const sizeBytes = buffer.length;
+    const key = crypto.randomUUID();
+    const pinFilename = filename || `staging_${key}.${contentTypeToExt(contentType)}`;
+    const cid = await pinMedia(raw, contentType, pinFilename);
+    const expiresAt = new Date(Date.now() + STAGING_TTL_MS).toISOString();
+    await insertStagingUpload({ account_id: accountId, key, content_type: contentType, size_bytes: sizeBytes, cid, expires_at: expiresAt });
+    return {
+        upload_url: `https://mcp.hekkova.com/staging/${key}`,
+        expires_in: 900,
+        content_type: contentType,
+        size_bytes: sizeBytes,
+    };
+}
+app.post('/api/upload', (req, res, next) => {
+    if ((req.headers['content-type'] ?? '').includes('multipart/form-data')) {
+        upload.single('file')(req, res, next);
+    }
+    else {
+        next();
+    }
+}, async (req, res) => {
+    // 1. Authenticate — API key only
+    const clientIp = getClientIp(req);
+    const ipCheck = isAuthBlocked(clientIp);
+    if (ipCheck.blocked) {
+        res.status(429).json({ error: 'AUTH_BLOCKED', message: `Too many failed authentication attempts. Retry after ${ipCheck.retryAfter} seconds.`, retry_after: ipCheck.retryAfter });
+        return;
+    }
+    let accountContext;
+    try {
+        accountContext = await validateApiKey(req.headers.authorization);
+        clearAuthFailures(clientIp);
+    }
+    catch {
+        const failResult = recordAuthFailure(clientIp);
+        if (failResult.blocked) {
+            res.status(429).json({ error: 'AUTH_BLOCKED', message: `Too many failed authentication attempts. Retry after ${failResult.retryAfter} seconds.`, retry_after: failResult.retryAfter });
+        }
+        else {
+            res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing API key' });
+        }
+        return;
+    }
+    // 2. Rate limit — separate staging bucket, max 10/min
+    const rlResult = await checkRateLimit(`${accountContext.account.id}:staging`, STAGING_UPLOAD_RATE_LIMIT);
+    applyRateLimitHeaders(res, rlResult);
+    if (!rlResult.allowed) {
+        const retryAfter = Math.ceil((rlResult.resetAt - Date.now()) / 1000);
+        res.status(429).json({ error: 'RATE_LIMITED', message: `Staging upload rate limit exceeded. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
+        return;
+    }
+    // 3. Extract file from multipart OR JSON body
+    let fileBase64;
+    let filename;
+    let contentType;
+    if (req.file) {
+        fileBase64 = req.file.buffer.toString('base64');
+        filename = req.file.originalname ?? 'upload';
+        contentType = req.body['content_type'] ?? req.file.mimetype;
+    }
+    else {
+        const body = req.body;
+        if (!body.file || !body.filename || !body.content_type) {
+            res.status(400).json({ error: 'BAD_REQUEST', message: 'JSON body must include: file (base64), filename, content_type' });
+            return;
+        }
+        fileBase64 = body.file;
+        filename = body.filename;
+        contentType = body.content_type;
+    }
+    // 4. Stage the file
+    try {
+        const result = await executeStagingUpload(fileBase64, filename, contentType, accountContext.account.id);
+        res.status(201).json(result);
+    }
+    catch (err) {
+        const e = err;
+        const code = e.code ?? 'INTERNAL_ERROR';
+        const statusMap = { INVALID_MEDIA_TYPE: 400, MEDIA_TOO_LARGE: 413 };
+        res.status(statusMap[code] ?? 500).json({ error: code, message: e.message });
+    }
 });
 // ── Billing: create checkout session ───────────────────────────────────────
 app.post('/api/checkout', async (req, res) => {
@@ -1028,5 +1176,18 @@ app.listen(config.port, () => {
     console.log(`   Endpoint: http://localhost:${config.port}/mcp`);
     console.log(`   Health:   http://localhost:${config.port}/health\n`);
 });
+// ── Staging cleanup — runs every 5 minutes, deletes files older than 15 min ─
+setInterval(async () => {
+    try {
+        const { deleted, cids } = await deleteExpiredStagingUploads();
+        if (deleted > 0) {
+            console.log(`[staging] Cleaned up ${deleted} expired staging file(s)`);
+            await Promise.allSettled(cids.map((cid) => unpinFromPinata(cid)));
+        }
+    }
+    catch (err) {
+        console.error('[staging] Cleanup error:', err.message);
+    }
+}, 5 * 60 * 1000);
 export default app;
 //# sourceMappingURL=server.js.map

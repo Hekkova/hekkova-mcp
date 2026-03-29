@@ -2,6 +2,9 @@ import { z } from 'zod';
 import dns from 'dns/promises';
 import { executeMint } from './mint-moment.js';
 import type { AccountContext, MediaType, MintResult } from '../types/index.js';
+import { config } from '../config.js';
+import { getStagingUpload, deleteStagingUpload } from '../services/database.js';
+import { unpinFromPinata } from '../services/storage.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSRF protection — block requests to private/loopback address ranges
@@ -271,6 +274,8 @@ async function fetchAndExtract(url: string, titleOverride?: string): Promise<Fet
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
 
+const STAGING_URL_RE = /^https:\/\/mcp\.hekkova\.com\/staging\/([0-9a-f-]{36})$/i;
+
 export async function handleMintFromUrl(
   rawInput: unknown,
   accountContext: AccountContext
@@ -290,6 +295,55 @@ export async function handleMintFromUrl(
     `[${new Date().toISOString()}] mint_from_url | account=${accountContext.account.id} | url=${url}`
   );
 
+  // ── Staging URL — bypass SSRF check and fetch directly from Pinata ─────────
+  const stagingMatch = url.match(STAGING_URL_RE);
+  if (stagingMatch) {
+    const key = stagingMatch[1]!;
+    const staging = await getStagingUpload(key);
+
+    if (!staging || new Date(staging.expires_at) < new Date()) {
+      const err = new Error(
+        'Staging upload has expired. Upload the file again with upload_media.'
+      ) as Error & { code: string };
+      err.code = 'STAGING_EXPIRED';
+      throw err;
+    }
+
+    if (staging.account_id !== accountContext.account.id) {
+      const err = new Error('Staging upload not found') as Error & { code: string };
+      err.code = 'NOT_FOUND';
+      throw err;
+    }
+
+    const gatewayUrl = `${config.pinataGateway}/ipfs/${staging.cid}`;
+    let mediaBuffer: Buffer;
+    try {
+      const response = await fetch(gatewayUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      mediaBuffer = Buffer.from(await response.arrayBuffer());
+    } catch (err) {
+      const fetchErr = new Error(`Failed to fetch staged file: ${(err as Error).message}`) as Error & { code: string };
+      fetchErr.code = 'URL_FETCH_FAILED';
+      throw fetchErr;
+    }
+
+    const mediaType: MediaType = resolveMediaType(staging.content_type) ?? 'image/jpeg';
+    const title = titleOverride ?? `Staged upload ${key.slice(0, 8)}`;
+
+    const mintResult = await executeMint(
+      { title, media: mediaBuffer.toString('base64'), media_type: mediaType, phase, category, eclipse_reveal_date, tags },
+      accountContext,
+      { source_url: url, source_platform: 'staging' }
+    );
+
+    // Clean up immediately after a successful mint — don't wait for TTL
+    await deleteStagingUpload(key);
+    unpinFromPinata(staging.cid).catch(() => undefined);
+
+    return { ...mintResult };
+  }
+
+  // ── Normal URL ─────────────────────────────────────────────────────────────
   const { media, mediaType, title, platform } = await fetchAndExtract(url, titleOverride);
 
   const mintResult = await executeMint(

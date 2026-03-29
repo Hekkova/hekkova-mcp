@@ -54,5 +54,22 @@ export declare function revokeHeir(heirId: string, accountId: string): Promise<v
  * Railway instances or Stripe retries cannot double-credit an account.
  */
 export declare function claimStripeEvent(eventId: string): Promise<boolean>;
+export interface StagingUpload {
+    id: string;
+    account_id: string;
+    key: string;
+    content_type: string;
+    size_bytes: number;
+    cid: string;
+    created_at: string;
+    expires_at: string;
+}
+export declare function insertStagingUpload(upload: Omit<StagingUpload, 'id' | 'created_at'>): Promise<StagingUpload>;
+export declare function getStagingUpload(key: string): Promise<StagingUpload | null>;
+export declare function deleteStagingUpload(key: string): Promise<void>;
+export declare function deleteExpiredStagingUploads(): Promise<{
+    deleted: number;
+    cids: string[];
+}>;
 export declare function seedTestData(): Promise<void>;
 //# sourceMappingURL=database.d.ts.map

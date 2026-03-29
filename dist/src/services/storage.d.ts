@@ -14,6 +14,10 @@ export declare function pinMetadata(metadata: object): Promise<string>;
  */
 export declare function pinJson(data: object): Promise<string>;
 /**
+ * Unpin a CID from Pinata. Non-fatal — logs on failure but never throws.
+ */
+export declare function unpinFromPinata(cid: string): Promise<void>;
+/**
  * Pin an export payload to IPFS via Pinata and return a public gateway URL.
  * The URL is permanent and verifiable on any IPFS gateway.
  */

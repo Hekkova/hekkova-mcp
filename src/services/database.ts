@@ -1,7 +1,7 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import * as crypto from 'crypto';
 import { config } from '../config.js';
-import type { Account, AccountContext, ApiKey, Category, Heir, Moment, Phase } from '../types/index.js';
+import type { Account, ApiKey, Category, Heir, Moment, Phase } from '../types/index.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase client (service role — full access, used server-side only)
@@ -543,6 +543,79 @@ export async function claimStripeEvent(eventId: string): Promise<boolean> {
   }
 
   return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Staging uploads
+//
+// Required migration — run once in Supabase SQL editor:
+//
+//   CREATE TABLE IF NOT EXISTS staging_uploads (
+//     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+//     account_id   UUID        NOT NULL REFERENCES accounts(id),
+//     key          UUID        NOT NULL UNIQUE,
+//     content_type TEXT        NOT NULL,
+//     size_bytes   INTEGER     NOT NULL,
+//     cid          TEXT        NOT NULL,
+//     created_at   TIMESTAMPTZ DEFAULT NOW(),
+//     expires_at   TIMESTAMPTZ NOT NULL
+//   );
+//   CREATE INDEX IF NOT EXISTS staging_uploads_expires_at ON staging_uploads(expires_at);
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface StagingUpload {
+  id: string;
+  account_id: string;
+  key: string;
+  content_type: string;
+  size_bytes: number;
+  cid: string;
+  created_at: string;
+  expires_at: string;
+}
+
+export async function insertStagingUpload(
+  upload: Omit<StagingUpload, 'id' | 'created_at'>
+): Promise<StagingUpload> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('staging_uploads')
+    .insert(upload)
+    .select()
+    .single();
+  if (error || !data) throw new Error(`Failed to insert staging upload: ${error?.message}`);
+  return data as StagingUpload;
+}
+
+export async function getStagingUpload(key: string): Promise<StagingUpload | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('staging_uploads')
+    .select('*')
+    .eq('key', key)
+    .single();
+  if (error || !data) return null;
+  return data as StagingUpload;
+}
+
+export async function deleteStagingUpload(key: string): Promise<void> {
+  const supabase = getSupabase();
+  await supabase.from('staging_uploads').delete().eq('key', key);
+}
+
+export async function deleteExpiredStagingUploads(): Promise<{ deleted: number; cids: string[] }> {
+  const supabase = getSupabase();
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('staging_uploads')
+    .select('key, cid')
+    .lt('expires_at', now);
+  if (error || !data || data.length === 0) return { deleted: 0, cids: [] };
+  const cids = (data as { key: string; cid: string }[]).map((r) => r.cid);
+  const keys = (data as { key: string; cid: string }[]).map((r) => r.key);
+  await supabase.from('staging_uploads').delete().in('key', keys);
+  return { deleted: keys.length, cids };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

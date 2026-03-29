@@ -96,6 +96,24 @@ export async function pinJson(data: object): Promise<string> {
 }
 
 /**
+ * Unpin a CID from Pinata. Non-fatal — logs on failure but never throws.
+ */
+export async function unpinFromPinata(cid: string): Promise<void> {
+  try {
+    const response = await fetch(`${PINATA_BASE}/pinning/unpin/${encodeURIComponent(cid)}`, {
+      method: 'DELETE',
+      headers: pinataHeaders(),
+    });
+    if (!response.ok && response.status !== 404) {
+      const text = await response.text().catch(() => '');
+      console.error(`[storage] Pinata unpin failed: ${response.status} ${text}`);
+    }
+  } catch (err) {
+    console.error('[storage] Pinata unpin network error:', err);
+  }
+}
+
+/**
  * Pin an export payload to IPFS via Pinata and return a public gateway URL.
  * The URL is permanent and verifiable on any IPFS gateway.
  */

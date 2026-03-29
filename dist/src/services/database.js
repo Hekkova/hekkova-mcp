@@ -421,6 +421,46 @@ export async function claimStripeEvent(eventId) {
     }
     return true;
 }
+export async function insertStagingUpload(upload) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('staging_uploads')
+        .insert(upload)
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to insert staging upload: ${error?.message}`);
+    return data;
+}
+export async function getStagingUpload(key) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('staging_uploads')
+        .select('*')
+        .eq('key', key)
+        .single();
+    if (error || !data)
+        return null;
+    return data;
+}
+export async function deleteStagingUpload(key) {
+    const supabase = getSupabase();
+    await supabase.from('staging_uploads').delete().eq('key', key);
+}
+export async function deleteExpiredStagingUploads() {
+    const supabase = getSupabase();
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+        .from('staging_uploads')
+        .select('key, cid')
+        .lt('expires_at', now);
+    if (error || !data || data.length === 0)
+        return { deleted: 0, cids: [] };
+    const cids = data.map((r) => r.cid);
+    const keys = data.map((r) => r.key);
+    await supabase.from('staging_uploads').delete().in('key', keys);
+    return { deleted: keys.length, cids };
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Seed (development only)
 // ─────────────────────────────────────────────────────────────────────────────

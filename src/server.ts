@@ -701,7 +701,7 @@ app.post(
     }
   },
   async (req: Request, res: Response): Promise<void> => {
-    // 1. Authenticate — API key only
+    // 1. Authenticate — API key (hk_live_/hk_test_) OR Supabase JWT
     const clientIp = getClientIp(req);
     const ipCheck = isAuthBlocked(clientIp);
     if (ipCheck.blocked) {
@@ -709,22 +709,33 @@ app.post(
       return;
     }
 
-    let accountContext: AccountContext;
+    const authHeader = req.headers.authorization;
+    const rawToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const isApiKey = /^hk_(live|test)_/.test(rawToken);
+
+    let account: Account;
     try {
-      accountContext = await validateApiKey(req.headers.authorization);
-      clearAuthFailures(clientIp);
-    } catch {
-      const failResult = recordAuthFailure(clientIp);
-      if (failResult.blocked) {
-        res.status(429).json({ error: 'AUTH_BLOCKED', message: `Too many failed authentication attempts. Retry after ${failResult.retryAfter} seconds.`, retry_after: failResult.retryAfter });
+      if (isApiKey) {
+        const ctx = await validateApiKey(authHeader);
+        clearAuthFailures(clientIp);
+        account = ctx.account;
       } else {
-        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing API key' });
+        account = await requireSupabaseAuth(authHeader);
       }
+    } catch {
+      if (isApiKey) {
+        const failResult = recordAuthFailure(clientIp);
+        if (failResult.blocked) {
+          res.status(429).json({ error: 'AUTH_BLOCKED', message: `Too many failed authentication attempts. Retry after ${failResult.retryAfter} seconds.`, retry_after: failResult.retryAfter });
+          return;
+        }
+      }
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing API key or authentication token' });
       return;
     }
 
     // 2. Rate limit — separate staging bucket, max 10/min
-    const rlResult = await checkRateLimit(`${accountContext.account.id}:staging`, STAGING_UPLOAD_RATE_LIMIT);
+    const rlResult = await checkRateLimit(`${account.id}:staging`, STAGING_UPLOAD_RATE_LIMIT);
     applyRateLimitHeaders(res, rlResult);
     if (!rlResult.allowed) {
       const retryAfter = Math.ceil((rlResult.resetAt - Date.now()) / 1000);
@@ -754,7 +765,7 @@ app.post(
 
     // 4. Stage the file
     try {
-      const result = await executeStagingUpload(fileBase64, filename, contentType, accountContext.account.id);
+      const result = await executeStagingUpload(fileBase64, filename, contentType, account.id);
       res.status(201).json(result);
     } catch (err) {
       const e = err as Error & { code?: string };

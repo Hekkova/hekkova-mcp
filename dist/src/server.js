@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
 import multer from 'multer';
-import { handleMintMoment } from './tools/mint-moment.js';
+import { handleMintMoment, executeMint } from './tools/mint-moment.js';
 import { pinMedia, unpinFromPinata } from './services/storage.js';
 import { insertStagingUpload, getStagingUpload, deleteExpiredStagingUploads } from './services/database.js';
 import { handleMintFromUrl } from './tools/mint-from-url.js';
@@ -1051,6 +1051,165 @@ app.post('/api/moments/:block_id/decrypt', async (req, res) => {
             ? e.message
             : 'DECRYPTION_FAILED: Failed to decrypt content. You may not have permission to view this moment.';
         res.status(500).json({ error: code, message });
+    }
+});
+// ── POST /api/mint — full mint in one HTTP request (dashboard + programmatic) ─
+//
+// Accepts multipart/form-data: file (binary), title, description?, phase?,
+// category?, tags? (comma-separated).
+// Auth: Bearer hk_live_/hk_test_ API key  OR  Supabase JWT.
+// Reuses executeMint() — the same path taken by the MCP tools.
+app.post('/api/mint', upload.single('file'), async (req, res) => {
+    // 1. Auth — API key OR Supabase JWT
+    const clientIp = getClientIp(req);
+    const ipCheck = isAuthBlocked(clientIp);
+    if (ipCheck.blocked) {
+        res.status(429).json({
+            error: 'AUTH_BLOCKED',
+            message: `Too many failed authentication attempts. Retry after ${ipCheck.retryAfter} seconds.`,
+            retry_after: ipCheck.retryAfter,
+        });
+        return;
+    }
+    const authHeader = req.headers.authorization;
+    const rawToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+    const isApiKey = /^hk_(live|test)_/.test(rawToken);
+    let accountContext;
+    try {
+        if (isApiKey) {
+            accountContext = await validateApiKey(authHeader);
+            clearAuthFailures(clientIp);
+        }
+        else {
+            // Supabase JWT — dashboard users; build a synthetic AccountContext so
+            // rate limiting and executeMint() work without an API key record.
+            const account = await requireSupabaseAuth(authHeader);
+            clearAuthFailures(clientIp);
+            accountContext = {
+                account,
+                apiKey: {
+                    id: 'dashboard',
+                    account_id: account.id,
+                    key_hash: '',
+                    key_prefix: 'dashboard',
+                    environment: 'live',
+                    created_at: new Date().toISOString(),
+                    revoked_at: null,
+                },
+            };
+        }
+    }
+    catch {
+        if (isApiKey) {
+            const failResult = recordAuthFailure(clientIp);
+            if (failResult.blocked) {
+                res.status(429).json({
+                    error: 'AUTH_BLOCKED',
+                    message: `Too many failed authentication attempts. Retry after ${failResult.retryAfter} seconds.`,
+                    retry_after: failResult.retryAfter,
+                });
+                return;
+            }
+        }
+        res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing API key or authentication token' });
+        return;
+    }
+    // 2. Rate limiting — general bucket then mint-specific bucket
+    const generalLimit = getGeneralLimit(accountContext);
+    const generalResult = await checkRateLimit(accountContext.account.id, generalLimit);
+    applyRateLimitHeaders(res, generalResult);
+    if (!generalResult.allowed) {
+        const retryAfter = Math.ceil((generalResult.resetAt - Date.now()) / 1000);
+        res.status(429).json({
+            error: 'RATE_LIMITED',
+            message: `Too many requests. Retry after ${retryAfter} seconds.`,
+            retry_after: retryAfter,
+        });
+        return;
+    }
+    const mintLimit = getMintLimit(accountContext);
+    const mintResult = await checkRateLimit(accountContext.account.id + ':mint', mintLimit);
+    if (!mintResult.allowed) {
+        const retryAfter = Math.ceil((mintResult.resetAt - Date.now()) / 1000);
+        res.status(429).json({
+            error: 'RATE_LIMITED',
+            message: `Mint rate limit exceeded. Retry after ${retryAfter} seconds.`,
+            retry_after: retryAfter,
+        });
+        return;
+    }
+    // 3. Validate file
+    if (!req.file) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'file is required (multipart/form-data)' });
+        return;
+    }
+    // 4. Validate and parse form fields
+    const body = req.body;
+    const title = (body['title'] ?? '').trim();
+    if (!title) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'title is required' });
+        return;
+    }
+    if (title.length > 200) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
+        return;
+    }
+    const VALID_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain'];
+    const mediaType = req.file.mimetype;
+    if (!VALID_MEDIA_TYPES.includes(mediaType)) {
+        res.status(400).json({
+            error: 'INVALID_MEDIA_TYPE',
+            message: `Unsupported media type: ${mediaType}. Supported types: ${VALID_MEDIA_TYPES.join(', ')}`,
+        });
+        return;
+    }
+    const VALID_PHASES = ['new_moon', 'crescent', 'gibbous', 'full_moon'];
+    const phase = body['phase'] ?? 'new_moon';
+    if (!VALID_PHASES.includes(phase)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `phase must be one of: ${VALID_PHASES.join(', ')}` });
+        return;
+    }
+    const VALID_CATEGORIES = ['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'];
+    const categoryRaw = body['category'] ?? '';
+    const category = categoryRaw && VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : null;
+    if (categoryRaw && !VALID_CATEGORIES.includes(categoryRaw)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
+        return;
+    }
+    const tagsRaw = body['tags'] ?? '';
+    const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
+    const description = body['description'] ?? undefined;
+    const mediaBase64 = req.file.buffer.toString('base64');
+    console.log(`[${new Date().toISOString()}] POST /api/mint | account=${accountContext.account.id} | title="${title}" | phase=${phase} | size=${req.file.size}`);
+    // 5. Execute the full mint — encrypt, pin to IPFS, mint NFT, save to DB
+    try {
+        const result = await executeMint({
+            title,
+            media: mediaBase64,
+            media_type: mediaType,
+            phase: phase,
+            category: (category ?? null),
+            description,
+            tags,
+        }, accountContext);
+        res.status(201).json(result);
+    }
+    catch (err) {
+        const e = err;
+        const code = e.code ?? 'INTERNAL_ERROR';
+        const statusMap = {
+            INSUFFICIENT_BALANCE: 402,
+            MEDIA_TOO_LARGE: 413,
+            INVALID_MEDIA_TYPE: 400,
+            RATE_LIMITED: 429,
+            ECLIPSE_REQUIRES_LEGACY: 403,
+            ECLIPSE_MISSING_DATE: 400,
+            ECLIPSE_DATE_PAST: 400,
+            INVALID_INPUT: 400,
+            UNAUTHORIZED: 401,
+        };
+        console.error(`[POST /api/mint] ${code}:`, e.message);
+        res.status(statusMap[code] ?? 500).json({ error: code, message: e.message });
     }
 });
 // TODO [MEDIUM]: Replace the _currentRequest global with AsyncLocalStorage so

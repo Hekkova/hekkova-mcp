@@ -17,7 +17,7 @@ import { validateApiKey } from './services/auth.js';
 import multer from 'multer';
 import { handleMintMoment, executeMint } from './tools/mint-moment.js';
 import { pinMedia, unpinFromPinata } from './services/storage.js';
-import { insertStagingUpload, getStagingUpload, deleteExpiredStagingUploads } from './services/database.js';
+import { insertStagingUpload, getStagingUpload, deleteStagingUpload, deleteExpiredStagingUploads } from './services/database.js';
 import { handleMintFromUrl } from './tools/mint-from-url.js';
 import { handleListMoments } from './tools/list-moments.js';
 import { handleGetMoment } from './tools/get-moment.js';
@@ -1274,7 +1274,13 @@ app.post(
 // Reuses executeMint() — the same path taken by the MCP tools.
 app.post(
   '/api/mint',
-  upload.single('file'),
+  (req: Request, res: Response, next: NextFunction) => {
+    if ((req.headers['content-type'] ?? '').includes('multipart/form-data')) {
+      upload.single('file')(req, res, next);
+    } else {
+      next();
+    }
+  },
   async (req: Request, res: Response): Promise<void> => {
     // 1. Auth — API key OR Supabase JWT
     const clientIp = getClientIp(req);
@@ -1357,91 +1363,222 @@ app.post(
       return;
     }
 
-    // 3. Validate file
-    if (!req.file) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'file is required (multipart/form-data)' });
-      return;
-    }
-
-    // 4. Validate and parse form fields
-    const body = req.body as Record<string, string>;
-
-    const title = (body['title'] ?? '').trim();
-    if (!title) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'title is required' });
-      return;
-    }
-    if (title.length > 200) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
-      return;
-    }
-
-    const VALID_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain'];
-    const mediaType = req.file.mimetype;
-    if (!VALID_MEDIA_TYPES.includes(mediaType)) {
-      res.status(400).json({
-        error: 'INVALID_MEDIA_TYPE',
-        message: `Unsupported media type: ${mediaType}. Supported types: ${VALID_MEDIA_TYPES.join(', ')}`,
-      });
-      return;
-    }
-
+    // 3. Determine input mode and shared validation constants
     const VALID_PHASES = ['new_moon', 'crescent', 'gibbous', 'full_moon'];
-    const phase = body['phase'] ?? 'new_moon';
-    if (!VALID_PHASES.includes(phase)) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: `phase must be one of: ${VALID_PHASES.join(', ')}` });
-      return;
-    }
-
     const VALID_CATEGORIES = ['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'];
-    const categoryRaw = body['category'] ?? '';
-    const category = categoryRaw && VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : null;
-    if (categoryRaw && !VALID_CATEGORIES.includes(categoryRaw)) {
-      res.status(400).json({ error: 'BAD_REQUEST', message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
-      return;
-    }
+    const MINT_ERROR_STATUS: Record<string, number> = {
+      INSUFFICIENT_BALANCE: 402,
+      MEDIA_TOO_LARGE: 413,
+      INVALID_MEDIA_TYPE: 400,
+      RATE_LIMITED: 429,
+      ECLIPSE_REQUIRES_LEGACY: 403,
+      ECLIPSE_MISSING_DATE: 400,
+      ECLIPSE_DATE_PAST: 400,
+      STAGING_EXPIRED: 410,
+      NOT_FOUND: 404,
+      INVALID_INPUT: 400,
+      UNAUTHORIZED: 401,
+    };
 
-    const tagsRaw = body['tags'] ?? '';
-    const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
+    const isMultipart = (req.headers['content-type'] ?? '').includes('multipart/form-data');
 
-    const description = body['description'] ?? undefined;
-    const mediaBase64 = req.file.buffer.toString('base64');
+    if (isMultipart) {
+      // ── Option A: multipart/form-data with a binary file field ────────────
+      if (!req.file) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'file is required in multipart/form-data body' });
+        return;
+      }
 
-    console.log(
-      `[${new Date().toISOString()}] POST /api/mint | account=${accountContext.account.id} | title="${title}" | phase=${phase} | size=${req.file.size}`
-    );
+      const body = req.body as Record<string, string>;
 
-    // 5. Execute the full mint — encrypt, pin to IPFS, mint NFT, save to DB
-    try {
-      const result = await executeMint(
-        {
-          title,
-          media: mediaBase64,
-          media_type: mediaType as Parameters<typeof executeMint>[0]['media_type'],
-          phase: phase as Parameters<typeof executeMint>[0]['phase'],
-          category: (category ?? null) as Parameters<typeof executeMint>[0]['category'],
-          description,
-          tags,
-        },
-        accountContext
+      const title = (body['title'] ?? '').trim();
+      if (!title) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'title is required' });
+        return;
+      }
+      if (title.length > 200) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
+        return;
+      }
+
+      const VALID_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain'];
+      const mediaType = req.file.mimetype;
+      if (!VALID_MEDIA_TYPES.includes(mediaType)) {
+        res.status(400).json({
+          error: 'INVALID_MEDIA_TYPE',
+          message: `Unsupported media type: ${mediaType}. Supported types: ${VALID_MEDIA_TYPES.join(', ')}`,
+        });
+        return;
+      }
+
+      const phase = body['phase'] ?? 'new_moon';
+      if (!VALID_PHASES.includes(phase)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `phase must be one of: ${VALID_PHASES.join(', ')}` });
+        return;
+      }
+
+      const categoryRaw = body['category'] ?? '';
+      const category = categoryRaw && VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : null;
+      if (categoryRaw && !VALID_CATEGORIES.includes(categoryRaw)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
+        return;
+      }
+
+      const tagsRaw = body['tags'] ?? '';
+      const tags = tagsRaw ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean) : [];
+      const description = body['description'] ?? undefined;
+      const mediaBase64 = req.file.buffer.toString('base64');
+
+      console.log(
+        `[${new Date().toISOString()}] POST /api/mint (multipart) | account=${accountContext.account.id} | title="${title}" | phase=${phase} | size=${req.file.size}`
       );
-      res.status(201).json(result);
-    } catch (err) {
-      const e = err as Error & { code?: string };
-      const code = e.code ?? 'INTERNAL_ERROR';
-      const statusMap: Record<string, number> = {
-        INSUFFICIENT_BALANCE: 402,
-        MEDIA_TOO_LARGE: 413,
-        INVALID_MEDIA_TYPE: 400,
-        RATE_LIMITED: 429,
-        ECLIPSE_REQUIRES_LEGACY: 403,
-        ECLIPSE_MISSING_DATE: 400,
-        ECLIPSE_DATE_PAST: 400,
-        INVALID_INPUT: 400,
-        UNAUTHORIZED: 401,
+
+      try {
+        const result = await executeMint(
+          {
+            title,
+            media: mediaBase64,
+            media_type: mediaType as Parameters<typeof executeMint>[0]['media_type'],
+            phase: phase as Parameters<typeof executeMint>[0]['phase'],
+            category: (category ?? null) as Parameters<typeof executeMint>[0]['category'],
+            description,
+            tags,
+          },
+          accountContext
+        );
+        res.status(201).json(result);
+      } catch (err) {
+        const e = err as Error & { code?: string };
+        const code = e.code ?? 'INTERNAL_ERROR';
+        console.error(`[POST /api/mint] ${code}:`, e.message);
+        res.status(MINT_ERROR_STATUS[code] ?? 500).json({ error: code, message: e.message });
+      }
+
+    } else {
+      // ── Option B: JSON body with upload_url from a prior /api/upload call ──
+      const body = req.body as {
+        upload_url?: string;
+        title?: string;
+        phase?: string;
+        category?: string;
+        description?: string;
+        tags?: string[];
       };
-      console.error(`[POST /api/mint] ${code}:`, e.message);
-      res.status(statusMap[code] ?? 500).json({ error: code, message: e.message });
+
+      if (!body.upload_url) {
+        res.status(400).json({
+          error: 'BAD_REQUEST',
+          message: 'Provide either multipart/form-data with a file field, or application/json with an upload_url from /api/upload',
+        });
+        return;
+      }
+
+      // Extract the staging UUID from the URL
+      const STAGING_URL_RE = /^https:\/\/mcp\.hekkova\.com\/staging\/([0-9a-f-]{36})$/i;
+      const stagingMatch = body.upload_url.match(STAGING_URL_RE);
+      if (!stagingMatch) {
+        res.status(400).json({
+          error: 'BAD_REQUEST',
+          message: 'upload_url must be a Hekkova staging URL returned by /api/upload (https://mcp.hekkova.com/staging/<uuid>)',
+        });
+        return;
+      }
+
+      const stagingKey = stagingMatch[1]!;
+      const staging = await getStagingUpload(stagingKey).catch(() => null);
+
+      if (!staging || new Date(staging.expires_at) < new Date()) {
+        res.status(410).json({ error: 'STAGING_EXPIRED', message: 'Staging upload has expired or does not exist. Upload the file again via /api/upload.' });
+        return;
+      }
+
+      // Ownership check — prevent one account from minting another's staged file
+      if (staging.account_id !== accountContext.account.id) {
+        res.status(404).json({ error: 'NOT_FOUND', message: 'Staging upload not found' });
+        return;
+      }
+
+      const title = (body.title ?? '').trim();
+      if (!title) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'title is required' });
+        return;
+      }
+      if (title.length > 200) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
+        return;
+      }
+
+      const phase = body.phase ?? 'new_moon';
+      if (!VALID_PHASES.includes(phase)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `phase must be one of: ${VALID_PHASES.join(', ')}` });
+        return;
+      }
+
+      const categoryRaw = body.category ?? '';
+      const category = categoryRaw && VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : null;
+      if (categoryRaw && !VALID_CATEGORIES.includes(categoryRaw)) {
+        res.status(400).json({ error: 'BAD_REQUEST', message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
+        return;
+      }
+
+      const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+      const description = body.description ?? undefined;
+
+      // Resolve the stored content_type to a supported MediaType
+      const STAGING_TYPE_MAP: Record<string, Parameters<typeof executeMint>[0]['media_type']> = {
+        'image/png': 'image/png', 'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg',
+        'image/gif': 'image/gif', 'video/mp4': 'video/mp4',
+        'audio/mpeg': 'audio/mp3', 'audio/mp3': 'audio/mp3', 'audio/wav': 'audio/wav',
+        'text/plain': 'text/plain',
+      };
+      const mediaType = STAGING_TYPE_MAP[staging.content_type.split(';')[0].trim().toLowerCase()];
+      if (!mediaType) {
+        res.status(400).json({ error: 'INVALID_MEDIA_TYPE', message: `Unsupported staging content type: ${staging.content_type}` });
+        return;
+      }
+
+      // Fetch the media buffer from IPFS via Pinata gateway
+      const gatewayUrl = `${config.pinataGateway}/ipfs/${staging.cid}`;
+      let mediaBuffer: Buffer;
+      try {
+        const response = await fetch(gatewayUrl);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        mediaBuffer = Buffer.from(await response.arrayBuffer());
+      } catch (err) {
+        console.error(`[POST /api/mint] failed to fetch staging CID ${staging.cid}:`, (err as Error).message);
+        res.status(502).json({ error: 'STAGING_FETCH_FAILED', message: 'Failed to retrieve staged file from storage. Try uploading again.' });
+        return;
+      }
+
+      console.log(
+        `[${new Date().toISOString()}] POST /api/mint (staging) | account=${accountContext.account.id} | title="${title}" | phase=${phase} | cid=${staging.cid}`
+      );
+
+      try {
+        const result = await executeMint(
+          {
+            title,
+            media: mediaBuffer.toString('base64'),
+            media_type: mediaType,
+            phase: phase as Parameters<typeof executeMint>[0]['phase'],
+            category: (category ?? null) as Parameters<typeof executeMint>[0]['category'],
+            description,
+            tags,
+          },
+          accountContext
+        );
+
+        // Clean up the staging record immediately — don't wait for TTL expiry
+        await deleteStagingUpload(stagingKey);
+        unpinFromPinata(staging.cid).catch(() => undefined);
+
+        res.status(201).json(result);
+      } catch (err) {
+        const e = err as Error & { code?: string };
+        const code = e.code ?? 'INTERNAL_ERROR';
+        console.error(`[POST /api/mint] ${code}:`, e.message);
+        res.status(MINT_ERROR_STATUS[code] ?? 500).json({ error: code, message: e.message });
+      }
     }
   }
 );

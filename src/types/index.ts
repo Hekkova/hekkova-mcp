@@ -67,6 +67,7 @@ export interface Moment {
   lit_acc_conditions: string | null;
   media_cid: string;
   metadata_cid: string;
+  lighthouse_cid: string | null;
   media_type: MediaType;
   polygon_tx: string;
   source_url: string | null;

@@ -95,6 +95,57 @@ export async function pinJson(data: object): Promise<string> {
   return pinMetadata(data);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Lighthouse (Filecoin cold archival)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const LIGHTHOUSE_BASE = 'https://node.lighthouse.storage';
+
+/**
+ * Upload a media buffer to Lighthouse for Filecoin cold archival.
+ * Non-fatal — returns null and logs on any failure so a Lighthouse outage
+ * never blocks a mint. The returned CID is stored in moments.lighthouse_cid.
+ *
+ * Requires LIGHTHOUSE_API_KEY env var. If not set, skips silently.
+ */
+export async function uploadToLighthouse(
+  mediaBase64: string,
+  mediaType: string,
+  fileName: string
+): Promise<string | null> {
+  if (!config.lighthouseApiKey) {
+    console.log('[storage] Lighthouse skipped: LIGHTHOUSE_API_KEY not set');
+    return null;
+  }
+
+  try {
+    const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+    const buffer = Buffer.from(raw, 'base64');
+
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
+
+    const response = await fetch(`${LIGHTHOUSE_BASE}/api/v0/add`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.lighthouseApiKey}` },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.error(`[storage] Lighthouse upload failed: ${response.status} ${text}`);
+      return null;
+    }
+
+    const data = (await response.json()) as { Hash: string; Name: string; Size: string };
+    console.log(`[storage] Lighthouse upload success: CID=${data.Hash}`);
+    return data.Hash;
+  } catch (err) {
+    console.error('[storage] Lighthouse upload error:', err);
+    return null;
+  }
+}
+
 /**
  * Unpin a CID from Pinata. Non-fatal — logs on failure but never throws.
  */

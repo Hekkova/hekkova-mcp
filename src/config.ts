@@ -38,6 +38,9 @@ export const config = {
   pinataJwt: required('PINATA_JWT'),
   pinataGateway: optional('PINATA_GATEWAY', 'https://gateway.pinata.cloud'),
 
+  // ── Lighthouse (Filecoin cold archival) ──────────────────────────────────
+  lighthouseApiKey: optional('LIGHTHOUSE_API_KEY', ''),
+
   // ── Lit Protocol ─────────────────────────────────────────────────────────
   litNetwork: optional('LIT_NETWORK', 'datil-dev'),
 
@@ -52,5 +55,7 @@ export const config = {
   purchaseUrl: 'https://hekkova.com/dashboard/billing',
   dashboardKeysUrl: 'https://hekkova.com/dashboard/keys',
 } as const;
+
+console.log("LIGHTHOUSE_API_KEY:", process.env.LIGHTHOUSE_API_KEY ? "set" : "NOT SET");
 
 export type Config = typeof config;

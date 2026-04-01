@@ -125,11 +125,15 @@ export async function uploadToLighthouse(
     const formData = new FormData();
     formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
 
+    console.log('[storage] Lighthouse upload starting...');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     const response = await fetch(`${LIGHTHOUSE_BASE}/api/v0/add`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${config.lighthouseApiKey}` },
       body: formData,
-    });
+      signal: controller.signal,
+    }).finally(() => clearTimeout(timeout));
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');

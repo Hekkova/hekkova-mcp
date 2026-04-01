@@ -1,3 +1,4 @@
+import lighthouse from '@lighthouse-web3/sdk';
 import { config } from '../config.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,7 +100,6 @@ export async function pinJson(data: object): Promise<string> {
 // Lighthouse (Filecoin cold archival)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LIGHTHOUSE_BASE = 'https://node.lighthouse.storage';
 
 /**
  * Upload a media buffer to Lighthouse for Filecoin cold archival.
@@ -122,28 +122,15 @@ export async function uploadToLighthouse(
     const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
     const buffer = Buffer.from(raw, 'base64');
 
-    const formData = new FormData();
-    formData.append('file', new Blob([buffer], { type: mediaType }), fileName);
-
     console.log('[storage] Lighthouse upload starting...');
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    const response = await fetch(`${LIGHTHOUSE_BASE}/api/v0/add`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${config.lighthouseApiKey}` },
-      body: formData,
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timeout));
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      console.error(`[storage] Lighthouse upload failed: ${response.status} ${text}`);
+    const result = await lighthouse.uploadBuffer(buffer, config.lighthouseApiKey);
+    const cid = result?.data?.Hash;
+    if (!cid) {
+      console.error('[storage] Lighthouse upload failed: no CID in response', result);
       return null;
     }
-
-    const data = (await response.json()) as { Hash: string; Name: string; Size: string };
-    console.log(`[storage] Lighthouse upload success: CID=${data.Hash}`);
-    return data.Hash;
+    console.log(`[storage] Lighthouse upload success: CID=${cid}`);
+    return cid;
   } catch (err) {
     console.error('[storage] Lighthouse upload error:', err);
     return null;

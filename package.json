@@ -16,6 +16,7 @@
     "@ethersproject/hardware-wallets": "^5.8.0",
     "@ethersproject/providers": "^5.8.0",
     "@ethersproject/wallet": "^5.8.0",
+    "@lighthouse-web3/sdk": "^0.4.5",
     "@lit-protocol/auth-helpers": "^8.0.0",
     "@lit-protocol/constants": "^7.4.0",
     "@lit-protocol/encryption": "^7.2.3",

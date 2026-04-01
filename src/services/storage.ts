@@ -122,14 +122,12 @@ export async function uploadToLighthouse(
     const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
     const buffer = Buffer.from(raw, 'base64');
 
-    console.log('[storage] Lighthouse upload starting...');
     const result = await lighthouse.uploadBuffer(buffer, config.lighthouseApiKey);
     const cid = result?.data?.Hash;
     if (!cid) {
       console.error('[storage] Lighthouse upload failed: no CID in response', result);
       return null;
     }
-    console.log(`[storage] Lighthouse upload success: CID=${cid}`);
     return cid;
   } catch (err) {
     console.error('[storage] Lighthouse upload error:', err);

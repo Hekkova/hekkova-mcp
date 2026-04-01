@@ -56,6 +56,4 @@ export const config = {
   dashboardKeysUrl: 'https://hekkova.com/dashboard/keys',
 } as const;
 
-console.log("LIGHTHOUSE_API_KEY:", process.env.LIGHTHOUSE_API_KEY ? "set" : "NOT SET");
-
 export type Config = typeof config;

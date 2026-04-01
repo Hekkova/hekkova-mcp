@@ -192,11 +192,8 @@ export async function executeMint(
   // 6. Pin media to IPFS + archive to Lighthouse (non-fatal)
   const ext = input.media_type.split('/')[1];
   const fileName = `${input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50)}.${ext}`;
-  console.log('[mint] Pinning media to IPFS...');
   const mediaCid = await pinMedia(mediaToPin, input.media_type, fileName);
-  console.log(`[mint] Pinata done: CID=${mediaCid}. Starting Lighthouse...`);
   const lighthouseCid = await uploadToLighthouse(mediaToPin, input.media_type, fileName);
-  console.log(`[mint] Lighthouse done: CID=${lighthouseCid}`);
 
   // 7. Build metadata object (ERC-721 / OpenSea compatible)
   const timestamp = input.timestamp ?? new Date().toISOString();

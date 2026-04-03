@@ -167,7 +167,9 @@ export async function getMasterKey(ownerId) {
     // 2. Decrypt raw entropy (32 bytes) with the wrapping key
     const entropyBytes = await decryptBytesAESGCM(server_encrypted_entropy, server_entropy_iv, wrappingKey);
     // 3. Derive master key from entropy + seed_salt (matches dashboard derivation)
+    // Dashboard calls deriveKey(bytesToHex(entropy), seedSalt) — hex string is the PBKDF2 password.
     const seedSaltBytes = base64ToBytes(seed_salt);
-    return deriveKey(entropyBytes, seedSaltBytes);
+    const entropyHex = bytesToHex(entropyBytes);
+    return deriveKey(entropyHex, seedSaltBytes);
 }
 //# sourceMappingURL=crypto.js.map

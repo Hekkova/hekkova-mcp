@@ -10,6 +10,52 @@ import { config } from '../config.js';
 // No Thirdweb infrastructure — all RPC calls go straight to polygonRpcUrl.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Retry helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TRANSIENT_PATTERNS = [
+  'timeout', '429', 'econnreset', 'econnrefused', 'etimedout',
+  'rate limit', 'too many requests', 'service unavailable', 'bad gateway',
+];
+
+const PERMANENT_PATTERNS = [
+  'insufficient funds', 'nonce', 'revert', 'rejected', 'denied',
+];
+
+function isTransient(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  if (PERMANENT_PATTERNS.some((p) => msg.includes(p))) return false;
+  return TRANSIENT_PATTERNS.some((p) => msg.includes(p));
+}
+
+interface RetryOptions {
+  maxAttempts?: number;   // default 4 (3 retries)
+  baseDelayMs?: number;   // default 1000
+  label?: string;
+}
+
+async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}): Promise<T> {
+  const { maxAttempts = 4, baseDelayMs = 1000, label = 'operation' } = opts;
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === maxAttempts || !isTransient(err)) throw err;
+      const backoff = baseDelayMs * Math.pow(2, attempt - 1);
+      const jitter = Math.floor(Math.random() * 200);
+      const delay = backoff + jitter;
+      console.warn(
+        `[blockchain] ${label} attempt ${attempt}/${maxAttempts - 1} failed — retrying in ${delay}ms. Error: ${err instanceof Error ? err.message : String(err)}`
+      );
+      await new Promise((res) => setTimeout(res, delay));
+    }
+  }
+  throw lastErr;
+}
+
 // ERC-721 Transfer event topic: keccak256("Transfer(address,address,uint256)")
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
@@ -68,12 +114,15 @@ export async function mintNFT(params: MintNFTParams): Promise<MintNFTResult> {
 
   let txHash: `0x${string}`;
   try {
-    txHash = await walletClient.writeContract({
-      address: contractAddress,
-      abi: CONTRACT_ABI,
-      functionName: 'mintTo',
-      args: [recipient, tokenURI],
-    });
+    txHash = await withRetry(
+      () => walletClient.writeContract({
+        address: contractAddress,
+        abi: CONTRACT_ABI,
+        functionName: 'mintTo',
+        args: [recipient, tokenURI],
+      }),
+      { label: 'writeContract' }
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message.toLowerCase() : '';
     if (msg.includes('insufficient funds') || msg.includes('insufficient balance')) {
@@ -93,7 +142,10 @@ export async function mintNFT(params: MintNFTParams): Promise<MintNFTResult> {
 
   let receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>;
   try {
-    receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    receipt = await withRetry(
+      () => publicClient.waitForTransactionReceipt({ hash: txHash }),
+      { label: 'waitForTransactionReceipt' }
+    );
   } catch (err) {
     console.error('[blockchain] waitForTransactionReceipt failed:', err);
     const e = new Error(

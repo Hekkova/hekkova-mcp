@@ -289,6 +289,7 @@ input:focus{border-color:#c9a84c44}
     });
     const decryptJS = `
 (function(){
+console.log('[Hekkova] decrypt script initialized');
 var ENC=${encDataJson};
 
 function b64ToBytes(b64){
@@ -306,76 +307,103 @@ function showError(msg){
 }
 
 async function unlock(){
+  console.log('[Hekkova] unlock() called');
   document.getElementById('err').textContent='';
   document.getElementById('btn').disabled=true;
   var pass=document.getElementById('pp').value;
   if(!pass){document.getElementById('btn').disabled=false;return;}
 
   try{
-    var enc=window.crypto.subtle;
+    var subtle=window.crypto&&window.crypto.subtle;
+    if(!subtle){
+      console.error('[Hekkova] Web Crypto API unavailable — page must be served over HTTPS or localhost');
+      return showError('Decryption unavailable. Open this file over HTTPS or localhost.');
+    }
 
     // 1. Import passphrase as PBKDF2 key material
-    var passKey=await enc.importKey(
+    var passKey=await subtle.importKey(
       'raw',new TextEncoder().encode(pass),
       {name:'PBKDF2'},false,['deriveBits']
     );
 
     // 2. Derive wrapping key from passphrase + passphraseSalt
-    var wkBits=await enc.deriveBits(
+    var wkBits=await subtle.deriveBits(
       {name:'PBKDF2',salt:b64ToBytes(ENC.passphraseSalt),iterations:600000,hash:'SHA-256'},
       passKey,256
     );
-    var wk=await enc.importKey('raw',wkBits,{name:'AES-GCM'},false,['decrypt']);
+    var wk=await subtle.importKey('raw',wkBits,{name:'AES-GCM'},false,['decrypt']);
+    console.log('[Hekkova] wrapping key derived');
 
     // 3. Decrypt entropy (raw 32 bytes) using wrapping key
     var entropyBytes;
     try{
-      entropyBytes=await enc.decrypt(
+      entropyBytes=await subtle.decrypt(
         {name:'AES-GCM',iv:b64ToBytes(ENC.entropyIV)},
         wk,b64ToBytes(ENC.encryptedEntropy)
       );
+      console.log('[Hekkova] entropy decrypted');
     }catch(e){
+      console.error('[Hekkova] entropy decrypt failed (wrong passphrase?):', e);
       return showError('Incorrect passphrase. Please try again.');
     }
 
     // 4. Derive master key from entropy + seedSalt
-    var entropyKey=await enc.importKey(
+    var entropyKey=await subtle.importKey(
       'raw',entropyBytes,{name:'PBKDF2'},false,['deriveBits']
     );
-    var mkBits=await enc.deriveBits(
+    var mkBits=await subtle.deriveBits(
       {name:'PBKDF2',salt:b64ToBytes(ENC.seedSalt),iterations:600000,hash:'SHA-256'},
       entropyKey,256
     );
+    console.log('[Hekkova] master key derived');
 
     // 5. Verify master key
-    var mkHash=hexStr(await enc.digest('SHA-256',mkBits));
+    var mkHash=hexStr(await subtle.digest('SHA-256',mkBits));
+    console.log('[Hekkova] verification hash computed:', mkHash, '| expected:', ENC.verificationHash);
     if(mkHash!==ENC.verificationHash){
+      console.error('[Hekkova] verification hash mismatch — wrong passphrase or corrupt data');
       return showError('Incorrect passphrase. Please try again.');
     }
 
     // 6. Import master key and decrypt content
-    var mk=await enc.importKey('raw',mkBits,{name:'AES-GCM'},false,['decrypt']);
+    var mk=await subtle.importKey('raw',mkBits,{name:'AES-GCM'},false,['decrypt']);
     var contentBytes;
     try{
-      contentBytes=await enc.decrypt(
+      contentBytes=await subtle.decrypt(
         {name:'AES-GCM',iv:b64ToBytes(ENC.iv)},
         mk,b64ToBytes(ENC.ciphertext)
       );
+      console.log('[Hekkova] content decrypted, bytes:', contentBytes.byteLength);
     }catch(e){
+      console.error('[Hekkova] content decrypt failed:', e);
       return showError('Decryption failed. Please try again.');
     }
 
+    // 7. Decode content string.
+    //    The encrypted payload stores content as a base64-encoded string regardless of media type.
+    //    For binary media (image/video/audio) the base64 string goes directly into a data URL.
+    //    For text content the base64 string must be decoded once more to recover the original text.
     var content=new TextDecoder().decode(contentBytes);
+    var mt=ENC.mediaType;
+    if(!mt.startsWith('image/')&&!mt.startsWith('video/')&&!mt.startsWith('audio/')){
+      try{
+        content=new TextDecoder().decode(b64ToBytes(content));
+        console.log('[Hekkova] text content base64-decoded');
+      }catch(decodeErr){
+        console.warn('[Hekkova] text base64 decode failed, using raw string:', decodeErr);
+      }
+    }
 
-    // 7. Render decrypted content and swap views
+    // 8. Render decrypted content and swap views
     var contentEl=document.getElementById('mc');
     ${renderContentJS(mediaType)}
+    console.log('[Hekkova] content rendered — swapping views');
 
     document.getElementById('lock-view').style.display='none';
     document.getElementById('open-view').style.display='block';
 
   }catch(e){
-    console.error(e);
+    console.error('[Hekkova] unexpected error in unlock():', e);
     showError('Something went wrong. Please try again.');
     document.getElementById('btn').disabled=false;
   }
@@ -388,9 +416,11 @@ function toggleVis(){
   else{f.type='password';b.textContent='Show';}
 }
 
+// Keep on window for console debugging; primary binding is via addEventListener below.
 window.unlock=unlock;
 window.toggleVis=toggleVis;
 
+document.getElementById('btn').addEventListener('click',unlock);
 document.getElementById('pp').addEventListener('keydown',function(e){
   if(e.key==='Enter')unlock();
 });
@@ -417,7 +447,7 @@ document.getElementById('pp').addEventListener('keydown',function(e){
         <input type="password" id="pp" placeholder="Your passphrase" autocomplete="current-password" spellcheck="false">
         <button class="toggle-vis" id="tv" type="button" onclick="toggleVis()">Show</button>
       </div>
-      <button class="btn" id="btn" onclick="unlock()">Unlock</button>
+      <button class="btn" id="btn" type="button">Unlock</button>
       <div class="error" id="err"></div>
     </div>
     ${metaBar}

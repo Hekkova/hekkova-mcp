@@ -227,6 +227,8 @@ export async function getMasterKey(ownerId: string): Promise<Buffer> {
   );
 
   // 3. Derive master key from entropy + seed_salt (matches dashboard derivation)
+  // Dashboard calls deriveKey(bytesToHex(entropy), seedSalt) — hex string is the PBKDF2 password.
   const seedSaltBytes = base64ToBytes(seed_salt);
-  return deriveKey(entropyBytes, seedSaltBytes);
+  const entropyHex = bytesToHex(entropyBytes);
+  return deriveKey(entropyHex, seedSaltBytes);
 }

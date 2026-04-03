@@ -53,6 +53,7 @@ export async function getAccountByKeyHash(
         total_minted,
         default_phase,
         legacy_plan,
+        passphrase_setup_complete,
         created_at
       )
     `

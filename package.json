@@ -9,18 +9,11 @@
     "build": "tsc",
     "start": "node dist/src/server.js",
     "seed": "tsx scripts/seed.ts",
-    "test-client": "tsx scripts/test-client.ts"
+    "test-client": "tsx scripts/test-client.ts",
+    "gen-test-html": "tsx scripts/generate-test-html.ts"
   },
   "dependencies": {
-    "@ethersproject/contracts": "^5.8.0",
-    "@ethersproject/hardware-wallets": "^5.8.0",
-    "@ethersproject/providers": "^5.8.0",
-    "@ethersproject/wallet": "^5.8.0",
     "@lighthouse-web3/sdk": "^0.4.5",
-    "@lit-protocol/auth-helpers": "^8.0.0",
-    "@lit-protocol/constants": "^7.4.0",
-    "@lit-protocol/encryption": "^7.2.3",
-    "@lit-protocol/lit-node-client": "^7.2.3",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@supabase/supabase-js": "^2.49.4",
     "@types/cors": "^2.8.17",
@@ -28,7 +21,6 @@
     "@types/node": "^22.15.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
-    "ethers": "^5.8.0",
     "express": "^4.21.2",
     "ioredis": "^5.10.1",
     "multer": "^1.4.5-lts.2",

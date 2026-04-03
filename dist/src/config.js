@@ -30,8 +30,12 @@ export const config = {
     // ── Pinata (IPFS) ─────────────────────────────────────────────────────────
     pinataJwt: required('PINATA_JWT'),
     pinataGateway: optional('PINATA_GATEWAY', 'https://gateway.pinata.cloud'),
-    // ── Lit Protocol ─────────────────────────────────────────────────────────
-    litNetwork: optional('LIT_NETWORK', 'datil-dev'),
+    // ── Lighthouse (Filecoin cold archival) ──────────────────────────────────
+    lighthouseApiKey: optional('LIGHTHOUSE_API_KEY', ''),
+    // ── Server-Side Encryption ───────────────────────────────────────────────
+    // 64-character hex string (32 bytes). Generate once, never change.
+    // Used to encrypt owner entropy server-side (via encrypt-for-server Edge Fn).
+    serverMasterSecret: required('SERVER_MASTER_SECRET'),
     // ── Stripe ───────────────────────────────────────────────────────────────
     stripeSecretKey: required('STRIPE_SECRET_KEY'),
     stripeWebhookSecret: required('STRIPE_WEBHOOK_SECRET'),

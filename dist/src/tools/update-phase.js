@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { getMomentByBlockId, updateMomentPhase } from '../services/database.js';
-import { encryptForPhase, shouldEncrypt } from '../services/encryption.js';
-import { pinMedia } from '../services/storage.js';
+import { getMomentByBlockId, updateMomentWithNewContent } from '../services/database.js';
+import { shouldEncrypt, encryptContent, decryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
+import { pinHtmlFile, uploadHtmlToLighthouse } from '../services/storage.js';
+import { buildMomentHTML } from '../templates/moment-html.js';
 import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
@@ -13,14 +14,9 @@ export const UpdatePhaseInputSchema = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase tier classification
 // ─────────────────────────────────────────────────────────────────────────────
-/** Returns true if this phase is in the "encrypted tier". */
 function isEncryptedTier(phase) {
     return phase !== 'full_moon';
 }
-/**
- * Returns true when moving between the encrypted tier and the public tier
- * (full_moon) — this is a "boundary crossing" that requires a fee.
- */
 function isBoundaryCrossing(fromPhase, toPhase) {
     return isEncryptedTier(fromPhase) !== isEncryptedTier(toPhase);
 }
@@ -30,9 +26,7 @@ function isBoundaryCrossing(fromPhase, toPhase) {
 export async function handleUpdatePhase(rawInput, accountContext) {
     const parsed = UpdatePhaseInputSchema.safeParse(rawInput);
     if (!parsed.success) {
-        const err = new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
-        err.code = 'INVALID_INPUT';
-        throw err;
+        throw Object.assign(new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`), { code: 'INVALID_INPUT' });
     }
     const { block_id, new_phase } = parsed.data;
     const { account } = accountContext;
@@ -40,61 +34,134 @@ export async function handleUpdatePhase(rawInput, accountContext) {
     // 1. Look up the moment
     const moment = await getMomentByBlockId(block_id, account.id);
     if (!moment) {
-        const err = new Error(`No moment found with block_id: ${block_id}`);
-        err.code = 'INVALID_BLOCK_ID';
-        throw err;
+        throw Object.assign(new Error(`No moment found with block_id: ${block_id}`), { code: 'INVALID_BLOCK_ID' });
     }
     const previousPhase = moment.phase;
     const targetPhase = new_phase;
-    // 2. Check if this crossing requires payment
+    // No-op: same phase
+    if (previousPhase === targetPhase) {
+        return {
+            block_id,
+            previous_phase: previousPhase,
+            new_phase: targetPhase,
+            fee_charged: 0,
+            new_html_cid: moment.media_cid,
+            message: 'Phase is already set to the requested value. No change made.',
+        };
+    }
+    // 2. Check boundary crossing payment
     const crossing = isBoundaryCrossing(previousPhase, targetPhase);
     if (crossing && !account.legacy_plan) {
-        const err = new Error(`Changing between encrypted phases and Full Moon costs $0.49 (re-encryption required). ` +
-            `Purchase access at ${config.purchaseUrl}. Legacy Plan accounts can do this for free.`);
-        err.code = 'PHASE_SHIFT_PAYMENT_REQUIRED';
-        throw err;
+        throw Object.assign(new Error(`Changing between encrypted phases and Full Moon costs $0.49 (re-encryption required). ` +
+            `Purchase access at ${config.purchaseUrl}. Legacy Plan accounts can do this for free.`), { code: 'PHASE_SHIFT_PAYMENT_REQUIRED' });
     }
-    // 3. Determine if re-encryption is needed and compute the new media CID
-    let reEncrypted = false;
-    let newMediaCid = null;
-    if (crossing && account.legacy_plan) {
-        // Re-encrypt (or decrypt) the media for the new phase.
-        // In a real implementation this would decrypt from Lit and re-encrypt
-        // with new access conditions (or strip encryption entirely for full_moon).
-        // TODO: Replace with real re-encryption via Lit Protocol
-        if (shouldEncrypt(targetPhase)) {
-            const { encryptedData } = await encryptForPhase(moment.media_cid, // stub: we pass the CID as a stand-in for actual media
-            targetPhase, accountContext);
-            newMediaCid = await pinMedia(encryptedData, moment.media_type, `re_encrypted_${block_id}`);
-        }
-        else {
-            // Decrypting to public — for the stub we just return a new fake CID
-            newMediaCid = await pinMedia(moment.media_cid, // stub
-            moment.media_type, `decrypted_${block_id}`);
-        }
-        reEncrypted = true;
+    // 3. Recover plaintext content
+    //    - From encrypted moment: decrypt Supabase-stored ciphertext with master key
+    //    - From full_moon moment: ciphertext stored if passphrase was set up at mint time
+    let plaintextContent;
+    if (moment.content_ciphertext && moment.content_iv) {
+        plaintextContent = await decryptContent(moment.content_ciphertext, moment.content_iv, account.id);
     }
-    // 4. Update the phase in the database
-    await updateMomentPhase(block_id, account.id, targetPhase);
+    else if (!shouldEncrypt(previousPhase)) {
+        // full_moon moment minted without passphrase setup — no stored ciphertext
+        throw Object.assign(new Error('Cannot shift this moment to an encrypted phase. The original content was not stored ' +
+            'because your passphrase was not set up at the time of minting. ' +
+            'Please mint a new encrypted moment from the Hekkova dashboard.'), { code: 'CONTENT_NOT_RECOVERABLE' });
+    }
+    else {
+        // Encrypted moment but ciphertext missing — data integrity issue
+        throw Object.assign(new Error('Content ciphertext missing from moment record. Please contact support.'), { code: 'CONTENT_NOT_FOUND' });
+    }
+    // 4. Rebuild the IPFS HTML viewer for the new phase
+    const needsEncryption = shouldEncrypt(targetPhase);
+    let newCiphertext = null;
+    let newIv = null;
+    let newHtmlCid;
+    let newLighthouseCid;
+    if (needsEncryption) {
+        // Re-encrypt content with master key (same key, just rebuild HTML with new phase badge)
+        const [encrypted, htmlFields] = await Promise.all([
+            encryptContent(plaintextContent, account.id),
+            getOwnerHtmlEncryptionFields(account.id),
+        ]);
+        newCiphertext = encrypted.ciphertext;
+        newIv = encrypted.iv;
+        const html = buildMomentHTML({
+            title: moment.title,
+            content: '',
+            mediaType: moment.media_type,
+            category: moment.category,
+            phase: targetPhase,
+            createdAt: moment.timestamp,
+            blockId: block_id,
+            tokenId: String(moment.token_id),
+            contractAddress: config.hekkovaContractAddress,
+            ipfsCid: moment.media_cid,
+            lighthouseCid: moment.lighthouse_cid ?? undefined,
+            encryption: {
+                ciphertext: encrypted.ciphertext,
+                iv: encrypted.iv,
+                encryptedEntropy: htmlFields.encryptedEntropy,
+                entropyIV: htmlFields.entropyIV,
+                passphraseSalt: htmlFields.passphraseSalt,
+                seedSalt: htmlFields.seedSalt,
+                verificationHash: htmlFields.verificationHash,
+            },
+        });
+        const safeTitle = moment.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+        newHtmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
+        newLighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
+    }
+    else {
+        // Shifting to full_moon — plaintext HTML, no passphrase required
+        // Still store encrypted copy in Supabase so future shifts back to encrypted work
+        if (account.passphrase_setup_complete) {
+            const encrypted = await encryptContent(plaintextContent, account.id);
+            newCiphertext = encrypted.ciphertext;
+            newIv = encrypted.iv;
+        }
+        const html = buildMomentHTML({
+            title: moment.title,
+            content: plaintextContent,
+            mediaType: moment.media_type,
+            category: moment.category,
+            phase: targetPhase,
+            createdAt: moment.timestamp,
+            blockId: block_id,
+            tokenId: String(moment.token_id),
+            contractAddress: config.hekkovaContractAddress,
+        });
+        const safeTitle = moment.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+        newHtmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
+        newLighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
+    }
+    // 5. Update the moment record in Supabase
+    await updateMomentWithNewContent(block_id, account.id, {
+        phase: targetPhase,
+        encrypted: needsEncryption,
+        media_cid: newHtmlCid,
+        lighthouse_cid: newLighthouseCid,
+        content_ciphertext: newCiphertext,
+        content_iv: newIv,
+    });
     let feeCharged = 0.0;
     let message;
     if (account.legacy_plan) {
-        message = 'Phase updated. Unlimited Phase Shifts included with your Legacy Plan.';
+        message = `Phase shifted from ${previousPhase} to ${targetPhase}. Unlimited Phase Shifts included with your Legacy Plan.`;
     }
     else if (crossing) {
         feeCharged = 0.49;
-        message = 'Phase Shift fee: $0.49. Upgrade to Legacy Plan for unlimited Phase Shifts.';
+        message = `Phase shifted. Phase Shift fee: $0.49. A new IPFS file has been pinned at ${newHtmlCid}.`;
     }
     else {
-        message = 'Phase updated. No charge for transitions between private phases.';
+        message = `Phase shifted from ${previousPhase} to ${targetPhase}. No charge for transitions between private phases.`;
     }
     return {
         block_id,
         previous_phase: previousPhase,
         new_phase: targetPhase,
         fee_charged: feeCharged,
-        re_encrypted: reEncrypted,
-        new_media_cid: newMediaCid,
+        new_html_cid: newHtmlCid,
         message,
     };
 }

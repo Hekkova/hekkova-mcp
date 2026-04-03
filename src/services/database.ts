@@ -93,6 +93,45 @@ export async function getAccountByKeyHash(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Owner encryption data (passphrase setup)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OwnerEncryptionData {
+  passphrase_setup_complete: boolean;
+  // Owner-facing fields (dashboard → passphrase path)
+  encrypted_entropy: string | null;
+  entropy_iv: string | null;
+  passphrase_salt: string | null;
+  seed_salt: string | null;
+  verification_hash: string | null;
+  // Server-facing fields (MCP server → SERVER_MASTER_SECRET path)
+  server_encrypted_entropy: string | null;
+  server_entropy_iv: string | null;
+  server_entropy_salt: string | null;
+}
+
+/**
+ * Fetch encryption-related columns from the accounts table for a given owner.
+ * Returns null if the account does not exist.
+ */
+export async function getOwnerEncryptionData(
+  accountId: string
+): Promise<OwnerEncryptionData | null> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('accounts')
+    .select(
+      'passphrase_setup_complete,encrypted_entropy,entropy_iv,passphrase_salt,seed_salt,verification_hash,server_encrypted_entropy,server_entropy_iv,server_entropy_salt'
+    )
+    .eq('id', accountId)
+    .single();
+
+  if (error || !data) return null;
+  return data as OwnerEncryptionData;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Moment queries
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -201,6 +240,36 @@ export async function updateMomentPhase(
     .single();
 
   if (error || !data) throw new Error(`Failed to update moment phase: ${error?.message}`);
+  return data as Moment;
+}
+
+/**
+ * Update a moment's phase, CIDs, and encryption fields after rebuilding its HTML.
+ * Used by the update_phase tool when a phase shift requires a new IPFS HTML file.
+ */
+export async function updateMomentWithNewContent(
+  blockId: string,
+  accountId: string,
+  updates: {
+    phase: Phase;
+    encrypted: boolean;
+    media_cid: string;
+    lighthouse_cid: string | null;
+    content_ciphertext: string | null;
+    content_iv: string | null;
+  }
+): Promise<Moment> {
+  const supabase = getSupabase();
+
+  const { data, error } = await supabase
+    .from('moments')
+    .update(updates)
+    .eq('block_id', blockId)
+    .eq('account_id', accountId)
+    .select()
+    .single();
+
+  if (error || !data) throw new Error(`Failed to update moment: ${error?.message}`);
   return data as Moment;
 }
 
@@ -544,6 +613,15 @@ export async function claimStripeEvent(eventId: string): Promise<boolean> {
 
   return true;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lighthouse CID column
+//
+// Required migration — run once in Supabase SQL editor:
+//
+//   ALTER TABLE moments ADD COLUMN IF NOT EXISTS lighthouse_cid TEXT;
+//
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Staging uploads

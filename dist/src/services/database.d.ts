@@ -4,6 +4,22 @@ export declare function getAccountByKeyHash(keyHash: string): Promise<{
     account: Account;
     apiKey: ApiKey;
 } | null>;
+export interface OwnerEncryptionData {
+    passphrase_setup_complete: boolean;
+    encrypted_entropy: string | null;
+    entropy_iv: string | null;
+    passphrase_salt: string | null;
+    seed_salt: string | null;
+    verification_hash: string | null;
+    server_encrypted_entropy: string | null;
+    server_entropy_iv: string | null;
+    server_entropy_salt: string | null;
+}
+/**
+ * Fetch encryption-related columns from the accounts table for a given owner.
+ * Returns null if the account does not exist.
+ */
+export declare function getOwnerEncryptionData(accountId: string): Promise<OwnerEncryptionData | null>;
 export declare function getMomentByBlockId(blockId: string, accountId: string): Promise<Moment | null>;
 export declare function listMoments(accountId: string, opts: {
     limit: number;
@@ -19,6 +35,18 @@ export declare function listMoments(accountId: string, opts: {
 }>;
 export declare function insertMoment(moment: Omit<Moment, 'id' | 'created_at'>): Promise<Moment>;
 export declare function updateMomentPhase(blockId: string, accountId: string, newPhase: Phase): Promise<Moment>;
+/**
+ * Update a moment's phase, CIDs, and encryption fields after rebuilding its HTML.
+ * Used by the update_phase tool when a phase shift requires a new IPFS HTML file.
+ */
+export declare function updateMomentWithNewContent(blockId: string, accountId: string, updates: {
+    phase: Phase;
+    encrypted: boolean;
+    media_cid: string;
+    lighthouse_cid: string | null;
+    content_ciphertext: string | null;
+    content_iv: string | null;
+}): Promise<Moment>;
 export declare function decrementMints(accountId: string): Promise<void>;
 export declare function incrementTotalMinted(accountId: string): Promise<void>;
 export declare function getAllMoments(accountId: string): Promise<Moment[]>;

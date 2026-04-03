@@ -41,8 +41,10 @@ export const config = {
   // ── Lighthouse (Filecoin cold archival) ──────────────────────────────────
   lighthouseApiKey: optional('LIGHTHOUSE_API_KEY', ''),
 
-  // ── Lit Protocol ─────────────────────────────────────────────────────────
-  litNetwork: optional('LIT_NETWORK', 'datil-dev'),
+  // ── Server-Side Encryption ───────────────────────────────────────────────
+  // 64-character hex string (32 bytes). Generate once, never change.
+  // Used to encrypt owner entropy server-side (via encrypt-for-server Edge Fn).
+  serverMasterSecret: required('SERVER_MASTER_SECRET'),
 
   // ── Stripe ───────────────────────────────────────────────────────────────
   stripeSecretKey: required('STRIPE_SECRET_KEY'),

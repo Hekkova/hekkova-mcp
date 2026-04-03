@@ -12,7 +12,8 @@ export declare const config: {
     readonly polygonRpcUrl: string;
     readonly pinataJwt: string;
     readonly pinataGateway: string;
-    readonly litNetwork: string;
+    readonly lighthouseApiKey: string;
+    readonly serverMasterSecret: string;
     readonly stripeSecretKey: string;
     readonly stripeWebhookSecret: string;
     readonly redisUrl: string;

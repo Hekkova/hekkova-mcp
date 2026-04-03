@@ -1,3 +1,4 @@
+import lighthouse from '@lighthouse-web3/sdk';
 import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova MCP Server — Storage Service (Pinata / IPFS)
@@ -76,6 +77,89 @@ export async function pinMetadata(metadata) {
  */
 export async function pinJson(data) {
     return pinMetadata(data);
+}
+/**
+ * Pin an HTML string to IPFS via Pinata.
+ * Used to upload the self-contained moment HTML viewer file.
+ * Returns the IPFS CID (IpfsHash).
+ */
+export async function pinHtmlFile(htmlContent, fileName) {
+    const buffer = Buffer.from(htmlContent, 'utf-8');
+    const formData = new FormData();
+    formData.append('file', new Blob([buffer], { type: 'text/html; charset=utf-8' }), fileName);
+    let response;
+    try {
+        response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+            method: 'POST',
+            headers: pinataHeaders(),
+            body: formData,
+        });
+    }
+    catch (err) {
+        console.error('[storage] Pinata pinHtmlFile network error:', err);
+        throw storageError();
+    }
+    if (!response.ok) {
+        const text = await response.text().catch(() => '');
+        console.error(`[storage] Pinata pinHtmlFile failed: ${response.status} ${text}`);
+        throw storageError();
+    }
+    const data = (await response.json());
+    return data.IpfsHash;
+}
+/**
+ * Upload an HTML string to Lighthouse for Filecoin cold archival.
+ * Non-fatal — returns null on any failure.
+ */
+export async function uploadHtmlToLighthouse(htmlContent, _fileName) {
+    if (!config.lighthouseApiKey) {
+        return null;
+    }
+    try {
+        const buffer = Buffer.from(htmlContent, 'utf-8');
+        const result = await lighthouse.uploadBuffer(buffer, config.lighthouseApiKey);
+        const cid = result?.data?.Hash;
+        if (!cid) {
+            console.error('[storage] Lighthouse HTML upload failed: no CID in response');
+            return null;
+        }
+        return cid;
+    }
+    catch (err) {
+        console.error('[storage] Lighthouse HTML upload error:', err);
+        return null;
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+// Lighthouse (Filecoin cold archival)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Upload a media buffer to Lighthouse for Filecoin cold archival.
+ * Non-fatal — returns null and logs on any failure so a Lighthouse outage
+ * never blocks a mint. The returned CID is stored in moments.lighthouse_cid.
+ *
+ * Requires LIGHTHOUSE_API_KEY env var. If not set, skips silently.
+ */
+export async function uploadToLighthouse(mediaBase64, _mediaType, _fileName) {
+    if (!config.lighthouseApiKey) {
+        console.log('[storage] Lighthouse skipped: LIGHTHOUSE_API_KEY not set');
+        return null;
+    }
+    try {
+        const raw = mediaBase64.includes(',') ? mediaBase64.split(',')[1] : mediaBase64;
+        const buffer = Buffer.from(raw, 'base64');
+        const result = await lighthouse.uploadBuffer(buffer, config.lighthouseApiKey);
+        const cid = result?.data?.Hash;
+        if (!cid) {
+            console.error('[storage] Lighthouse upload failed: no CID in response', result);
+            return null;
+        }
+        return cid;
+    }
+    catch (err) {
+        console.error('[storage] Lighthouse upload error:', err);
+        return null;
+    }
 }
 /**
  * Unpin a CID from Pinata. Non-fatal — logs on failure but never throws.

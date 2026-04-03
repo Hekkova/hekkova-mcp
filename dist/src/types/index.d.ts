@@ -1,9 +1,9 @@
 /**
  * Privacy phase controlling encryption and access control for a moment.
  *
- * new_moon   — owner only (fully encrypted with Lit Protocol)
- * crescent   — close circle of 2–10 (encrypted, shared access conditions)
- * gibbous    — extended group up to 50 (token-gated)
+ * new_moon   — owner only (AES-256-GCM, passphrase-derived master key)
+ * crescent   — close circle of 2–10 (encrypted, same key scheme)
+ * gibbous    — extended group up to 50 (encrypted, same key scheme)
  * full_moon  — fully public (unencrypted, open access)
  */
 export type Phase = 'new_moon' | 'crescent' | 'gibbous' | 'full_moon';
@@ -33,10 +33,17 @@ export interface Account {
     total_minted: number;
     default_phase: Phase;
     legacy_plan: boolean;
+    passphrase_setup_complete: boolean;
     created_at: string;
 }
 /**
  * A minted moment record (maps to the `moments` table in Supabase).
+ *
+ * media_cid      — IPFS CID of the self-contained HTML viewer file
+ * metadata_cid   — IPFS CID of the ERC-721 metadata JSON (tokenURI)
+ * content_ciphertext — AES-256-GCM encrypted moment content (master key),
+ *                      stored so the dashboard can decrypt with the owner's passphrase
+ * content_iv     — base64 IV for content_ciphertext
  */
 export interface Moment {
     id: string;
@@ -52,6 +59,9 @@ export interface Moment {
     lit_acc_conditions: string | null;
     media_cid: string;
     metadata_cid: string;
+    lighthouse_cid: string | null;
+    content_ciphertext: string | null;
+    content_iv: string | null;
     media_type: MediaType;
     polygon_tx: string;
     source_url: string | null;

@@ -96,6 +96,67 @@ export async function pinJson(data: object): Promise<string> {
   return pinMetadata(data);
 }
 
+/**
+ * Pin an HTML string to IPFS via Pinata.
+ * Used to upload the self-contained moment HTML viewer file.
+ * Returns the IPFS CID (IpfsHash).
+ */
+export async function pinHtmlFile(
+  htmlContent: string,
+  fileName: string
+): Promise<string> {
+  const buffer = Buffer.from(htmlContent, 'utf-8');
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: 'text/html; charset=utf-8' }), fileName);
+
+  let response: Response;
+  try {
+    response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+      method: 'POST',
+      headers: pinataHeaders(),
+      body: formData,
+    });
+  } catch (err) {
+    console.error('[storage] Pinata pinHtmlFile network error:', err);
+    throw storageError();
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error(`[storage] Pinata pinHtmlFile failed: ${response.status} ${text}`);
+    throw storageError();
+  }
+
+  const data = (await response.json()) as { IpfsHash: string };
+  return data.IpfsHash;
+}
+
+/**
+ * Upload an HTML string to Lighthouse for Filecoin cold archival.
+ * Non-fatal — returns null on any failure.
+ */
+export async function uploadHtmlToLighthouse(
+  htmlContent: string,
+  _fileName: string
+): Promise<string | null> {
+  if (!config.lighthouseApiKey) {
+    return null;
+  }
+  try {
+    const buffer = Buffer.from(htmlContent, 'utf-8');
+    const result = await lighthouse.uploadBuffer(buffer, config.lighthouseApiKey);
+    const cid = result?.data?.Hash;
+    if (!cid) {
+      console.error('[storage] Lighthouse HTML upload failed: no CID in response');
+      return null;
+    }
+    return cid;
+  } catch (err) {
+    console.error('[storage] Lighthouse HTML upload error:', err);
+    return null;
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lighthouse (Filecoin cold archival)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,8 +171,8 @@ export async function pinJson(data: object): Promise<string> {
  */
 export async function uploadToLighthouse(
   mediaBase64: string,
-  mediaType: string,
-  fileName: string
+  _mediaType: string,
+  _fileName: string
 ): Promise<string | null> {
   if (!config.lighthouseApiKey) {
     console.log('[storage] Lighthouse skipped: LIGHTHOUSE_API_KEY not set');

@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import sharp from 'sharp';
-import { encryptForPhase, shouldEncrypt } from '../services/encryption.js';
-import { pinMedia, pinMetadata } from '../services/storage.js';
+import { shouldEncrypt, encryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
+import { pinHtmlFile, pinMetadata, uploadHtmlToLighthouse } from '../services/storage.js';
 import { mintNFT } from '../services/blockchain.js';
 import { decrementMints, incrementTotalMinted, insertMoment } from '../services/database.js';
+import { buildMomentHTML } from '../templates/moment-html.js';
 import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
@@ -33,24 +34,18 @@ export const MintMomentInputSchema = z.object({
 // ─────────────────────────────────────────────────────────────────────────────
 // Max media size: 50 MB (base64 is ~4/3 the size of binary)
 // ─────────────────────────────────────────────────────────────────────────────
-const MAX_MEDIA_BYTES = 50 * 1024 * 1024; // 50 MB binary
+const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
 function base64DecodedSize(base64) {
-    // Strip data URL prefix if present
     const raw = base64.includes(',') ? base64.split(',')[1] : base64;
     const padding = (raw.match(/=+$/) ?? [])[0]?.length ?? 0;
     return (raw.length * 3) / 4 - padding;
 }
 // ─────────────────────────────────────────────────────────────────────────────
-// Image compression threshold: 500 KB (binary)
+// Image compression threshold: 200 KB
 // ─────────────────────────────────────────────────────────────────────────────
-const COMPRESS_THRESHOLD_BYTES = 200 * 1024; // 200 KB
+const COMPRESS_THRESHOLD_BYTES = 200 * 1024;
 const COMPRESS_MAX_PX = 1024;
 const COMPRESS_QUALITY = 80;
-/**
- * If the image is larger than 500 KB, resize to max 1024px on the longest
- * side and re-encode as JPEG at 80% quality. Returns the (possibly updated)
- * base64 string and the effective media_type.
- */
 async function maybeCompressImage(base64, mediaType) {
     const isImage = mediaType.startsWith('image/') && mediaType !== 'image/gif';
     if (!isImage)
@@ -73,85 +68,119 @@ export async function executeMint(input, accountContext, overrides = {}) {
     const { account } = accountContext;
     // 1. Validate eclipse is Legacy Plan only
     if (input.category === 'eclipse' && !account.legacy_plan) {
-        const err = new Error('Eclipse time-locked moments are a Legacy Plan feature. Upgrade at https://hekkova.com/dashboard/billing');
-        err.code = 'ECLIPSE_REQUIRES_LEGACY';
-        throw err;
+        throw Object.assign(new Error('Eclipse time-locked moments are a Legacy Plan feature. Upgrade at https://hekkova.com/dashboard/billing'), { code: 'ECLIPSE_REQUIRES_LEGACY' });
     }
-    // 2. Validate eclipse_reveal_date requirement
     if (input.category === 'eclipse' && !input.eclipse_reveal_date) {
-        const err = new Error('Eclipse category requires eclipse_reveal_date parameter');
-        err.code = 'ECLIPSE_MISSING_DATE';
-        throw err;
+        throw Object.assign(new Error('Eclipse category requires eclipse_reveal_date parameter'), { code: 'ECLIPSE_MISSING_DATE' });
     }
     if (input.category === 'eclipse' && input.eclipse_reveal_date) {
         const revealDate = new Date(input.eclipse_reveal_date);
         if (isNaN(revealDate.getTime()) || revealDate <= new Date()) {
-            const err = new Error('Eclipse reveal date must be in the future');
-            err.code = 'ECLIPSE_DATE_PAST';
-            throw err;
+            throw Object.assign(new Error('Eclipse reveal date must be in the future'), { code: 'ECLIPSE_DATE_PAST' });
         }
     }
-    // 2. Compress image if over threshold, then validate size
+    // 2. Compress image if over threshold
     const { base64: compressedMedia, mediaType: effectiveMediaType } = await maybeCompressImage(input.media, input.media_type);
-    // Mutate input so downstream steps use the compressed version
     input = { ...input, media: compressedMedia, media_type: effectiveMediaType };
     const binarySize = base64DecodedSize(input.media);
-    // Video and audio over 10MB will timeout through MCP base64 transport
     const isVideoOrAudio = input.media_type.startsWith('video/') || input.media_type.startsWith('audio/');
     if (isVideoOrAudio && binarySize > 10 * 1024 * 1024) {
-        const err = new Error(`Video and audio files over 10MB cannot be sent via base64 transport (received ${(binarySize / 1024 / 1024).toFixed(1)}MB). ` +
-            `Use mint_from_url with a public URL, or upload directly at https://mcp.hekkova.com/api/upload.`);
-        err.code = 'MEDIA_TOO_LARGE';
-        throw err;
+        throw Object.assign(new Error(`Video and audio files over 10MB cannot be sent via base64 transport (received ${(binarySize / 1024 / 1024).toFixed(1)}MB). ` +
+            `Use mint_from_url with a public URL, or upload directly at https://mcp.hekkova.com/api/upload.`), { code: 'MEDIA_TOO_LARGE' });
     }
     if (binarySize > MAX_MEDIA_BYTES) {
-        const err = new Error(`Media exceeds 50MB limit (received ${(binarySize / 1024 / 1024).toFixed(1)}MB)`);
-        err.code = 'MEDIA_TOO_LARGE';
-        throw err;
+        throw Object.assign(new Error(`Media exceeds 50MB limit (received ${(binarySize / 1024 / 1024).toFixed(1)}MB)`), { code: 'MEDIA_TOO_LARGE' });
     }
-    // 3. Validate media_type (already enforced by Zod enum, but be explicit)
-    const validMediaTypes = [
-        'image/png', 'image/jpeg', 'image/gif',
-        'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain',
-    ];
-    if (!validMediaTypes.includes(input.media_type)) {
-        const err = new Error(`Unsupported media type: ${input.media_type}. Supported types: ${validMediaTypes.join(', ')}`);
-        err.code = 'INVALID_MEDIA_TYPE';
-        throw err;
-    }
-    // 4. Check mint balance
+    // 3. Check mint balance
     if (account.mints_remaining <= 0) {
-        const err = new Error(`No mint credits remaining. Purchase more at ${config.purchaseUrl}`);
-        err.code = 'INSUFFICIENT_BALANCE';
-        throw err;
+        throw Object.assign(new Error(`No mint credits remaining. Purchase more at ${config.purchaseUrl}`), { code: 'INSUFFICIENT_BALANCE' });
     }
-    // 5. Encrypt if needed
     const phase = input.phase;
-    let mediaToPin = input.media;
-    let encrypted = false;
-    let accHash = '';
-    let accConditions = '';
-    if (shouldEncrypt(phase)) {
-        const result = await encryptForPhase(input.media, phase, accountContext, input.eclipse_reveal_date);
-        mediaToPin = result.encryptedData;
-        accHash = result.accHash;
-        accConditions = result.accConditions;
-        encrypted = true;
-    }
-    // 6. Pin media to IPFS
-    const ext = input.media_type.split('/')[1];
-    const fileName = `${input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50)}.${ext}`;
-    const mediaCid = await pinMedia(mediaToPin, input.media_type, fileName);
-    // 7. Build metadata object (ERC-721 / OpenSea compatible)
     const timestamp = input.timestamp ?? new Date().toISOString();
+    const needsEncryption = shouldEncrypt(phase);
+    // 4. Validate passphrase setup for encrypted moments
+    if (needsEncryption && !account.passphrase_setup_complete) {
+        throw Object.assign(new Error('Passphrase setup required. Please complete setup in the Hekkova dashboard at app.hekkova.com before minting encrypted moments.'), { code: 'PASSPHRASE_SETUP_REQUIRED' });
+    }
+    // 5. Encrypt content and build the IPFS HTML viewer
+    let htmlCid;
+    let lighthouseCid;
+    let contentCiphertext = null;
+    let contentIv = null;
+    const rawContent = input.media; // base64 for media, text string for text/plain
+    if (needsEncryption) {
+        // Encrypt content with the owner's master key
+        const [encrypted, htmlFields] = await Promise.all([
+            encryptContent(rawContent, account.id),
+            getOwnerHtmlEncryptionFields(account.id),
+        ]);
+        contentCiphertext = encrypted.ciphertext;
+        contentIv = encrypted.iv;
+        // Build HTML with encrypted payload embedded
+        const html = buildMomentHTML({
+            title: input.title,
+            content: '', // not used for encrypted moments
+            mediaType: input.media_type,
+            category: input.category,
+            phase,
+            createdAt: timestamp,
+            blockId: 'pending', // placeholder — updated after minting
+            tokenId: '0',
+            contractAddress: config.hekkovaContractAddress,
+            encryption: {
+                ciphertext: encrypted.ciphertext,
+                iv: encrypted.iv,
+                encryptedEntropy: htmlFields.encryptedEntropy,
+                entropyIV: htmlFields.entropyIV,
+                passphraseSalt: htmlFields.passphraseSalt,
+                seedSalt: htmlFields.seedSalt,
+                verificationHash: htmlFields.verificationHash,
+            },
+        });
+        const safeTitle = input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+        htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
+        lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
+    }
+    else {
+        // full_moon — embed plaintext in the HTML viewer
+        // Note: even for full_moon, store encrypted copy in Supabase if possible
+        //       so the owner can phase-shift to encrypted later.
+        let masterKeyEncrypted = null;
+        if (account.passphrase_setup_complete) {
+            masterKeyEncrypted = await encryptContent(rawContent, account.id);
+            contentCiphertext = masterKeyEncrypted.ciphertext;
+            contentIv = masterKeyEncrypted.iv;
+        }
+        const html = buildMomentHTML({
+            title: input.title,
+            content: rawContent,
+            mediaType: input.media_type,
+            category: input.category,
+            phase,
+            createdAt: timestamp,
+            blockId: 'pending',
+            tokenId: '0',
+            contractAddress: config.hekkovaContractAddress,
+        });
+        const safeTitle = input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+        htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
+        lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
+    }
+    // 6. Build NFT metadata JSON (ERC-721 / OpenSea compatible)
+    const contentPreview = needsEncryption
+        ? 'Encrypted moment'
+        : input.media_type === 'text/plain'
+            ? rawContent.slice(0, 200)
+            : `${phaseLabel(phase)} moment`;
     const metadata = {
         name: input.title,
-        description: input.description ?? '',
-        image: `ipfs://${mediaCid}`,
+        description: input.description ?? contentPreview,
+        external_url: `https://ipfs.io/ipfs/${htmlCid}`,
+        content_type: 'text/html',
         attributes: [
             { trait_type: 'Phase', value: phase },
             { trait_type: 'Category', value: input.category ?? 'uncategorized' },
-            { trait_type: 'Encrypted', value: encrypted },
+            { trait_type: 'Encrypted', value: needsEncryption },
             { trait_type: 'Media Type', value: input.media_type },
             { trait_type: 'Timestamp', value: timestamp },
             ...(input.tags ?? []).map((tag) => ({ trait_type: 'Tag', value: tag })),
@@ -165,43 +194,43 @@ export async function executeMint(input, accountContext, overrides = {}) {
         properties: {
             phase,
             category: input.category,
-            encrypted,
+            encrypted: needsEncryption,
             media_type: input.media_type,
-            media_cid: mediaCid,
+            html_cid: htmlCid,
             source_url: overrides.source_url ?? null,
             source_platform: overrides.source_platform ?? null,
             eclipse_reveal_date: input.eclipse_reveal_date ?? null,
             tags: input.tags ?? [],
-            // Lit Protocol decryption metadata (present when encrypted: true)
-            lit_acc_hash: accHash || null,
-            lit_acc_conditions: accConditions ? JSON.parse(accConditions) : null,
         },
     };
-    // 8. Pin metadata to IPFS
+    // 7. Pin metadata to IPFS
     const metadataCid = await pinMetadata(metadata);
-    // 9. Mint NFT on Polygon
+    // 8. Mint NFT on Polygon (tokenURI = ipfs://metadataCid)
     const { tokenId, txHash, blockId } = await mintNFT({
         metadataCid,
         accountId: account.id,
         walletAddress: account.wallet_address ?? '',
     });
-    // 10. Update account counters
+    // 9. Update account counters
     await decrementMints(account.id);
     await incrementTotalMinted(account.id);
-    // 11. Persist moment record
+    // 10. Persist moment record
     const moment = await insertMoment({
         account_id: account.id,
         block_id: blockId,
         token_id: tokenId,
         title: input.title,
         description: input.description ?? null,
-        phase: phase,
+        phase,
         category: input.category ?? null,
-        encrypted,
-        lit_acc_hash: accHash || null,
-        lit_acc_conditions: accConditions || null,
-        media_cid: mediaCid,
+        encrypted: needsEncryption,
+        lit_acc_hash: null,
+        lit_acc_conditions: null,
+        media_cid: htmlCid, // the self-contained HTML viewer CID
         metadata_cid: metadataCid,
+        lighthouse_cid: lighthouseCid,
+        content_ciphertext: contentCiphertext,
+        content_iv: contentIv,
         media_type: input.media_type,
         polygon_tx: txHash,
         source_url: overrides.source_url ?? null,
@@ -210,16 +239,16 @@ export async function executeMint(input, accountContext, overrides = {}) {
         tags: input.tags ?? [],
         timestamp,
     });
-    void moment; // moment is persisted; we construct the response manually
+    void moment;
     const balanceRemaining = Math.max(0, account.mints_remaining - 1);
     const result = {
         block_id: blockId,
         token_id: tokenId,
-        media_cid: mediaCid,
+        media_cid: htmlCid,
         metadata_cid: metadataCid,
         phase,
         category: input.category ?? null,
-        encrypted,
+        encrypted: needsEncryption,
         polygon_tx: txHash,
         timestamp,
         balance_remaining: balanceRemaining,
@@ -231,14 +260,24 @@ export async function executeMint(input, accountContext, overrides = {}) {
     return result;
 }
 // ─────────────────────────────────────────────────────────────────────────────
+// Phase label helper (for NFT metadata description)
+// ─────────────────────────────────────────────────────────────────────────────
+function phaseLabel(phase) {
+    const map = {
+        new_moon: 'New Moon',
+        crescent: 'Crescent',
+        gibbous: 'Gibbous',
+        full_moon: 'Full Moon',
+    };
+    return map[phase];
+}
+// ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
 export async function handleMintMoment(rawInput, accountContext) {
     const parsed = MintMomentInputSchema.safeParse(rawInput);
     if (!parsed.success) {
-        const err = new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`);
-        err.code = 'INVALID_INPUT';
-        throw err;
+        throw Object.assign(new Error(`Invalid input: ${parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ')}`), { code: 'INVALID_INPUT' });
     }
     console.log(`[${new Date().toISOString()}] mint_moment | account=${accountContext.account.id} | title="${parsed.data.title}" | phase=${parsed.data.phase}`);
     return executeMint(parsed.data, accountContext);

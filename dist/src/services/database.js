@@ -65,6 +65,21 @@ export async function getAccountByKeyHash(keyHash) {
     };
     return { account, apiKey };
 }
+/**
+ * Fetch encryption-related columns from the accounts table for a given owner.
+ * Returns null if the account does not exist.
+ */
+export async function getOwnerEncryptionData(accountId) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('accounts')
+        .select('passphrase_setup_complete,encrypted_entropy,entropy_iv,passphrase_salt,seed_salt,verification_hash,server_encrypted_entropy,server_entropy_iv,server_entropy_salt')
+        .eq('id', accountId)
+        .single();
+    if (error || !data)
+        return null;
+    return data;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Moment queries
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +157,23 @@ export async function updateMomentPhase(blockId, accountId, newPhase) {
         .single();
     if (error || !data)
         throw new Error(`Failed to update moment phase: ${error?.message}`);
+    return data;
+}
+/**
+ * Update a moment's phase, CIDs, and encryption fields after rebuilding its HTML.
+ * Used by the update_phase tool when a phase shift requires a new IPFS HTML file.
+ */
+export async function updateMomentWithNewContent(blockId, accountId, updates) {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .update(updates)
+        .eq('block_id', blockId)
+        .eq('account_id', accountId)
+        .select()
+        .single();
+    if (error || !data)
+        throw new Error(`Failed to update moment: ${error?.message}`);
     return data;
 }
 export async function decrementMints(accountId) {

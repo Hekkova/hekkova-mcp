@@ -53,9 +53,8 @@ export async function handleListMoments(rawInput, accountContext) {
             tags: m.tags,
         };
         if (isEclipse) {
-            summary.sealed = isSealed;
-            if (isSealed)
-                summary.reveals_at = m.eclipse_reveal_date;
+            summary.eclipse_locked = isSealed;
+            summary.eclipse_reveal_date = m.eclipse_reveal_date;
         }
         return summary;
     });

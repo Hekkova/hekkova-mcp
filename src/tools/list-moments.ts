@@ -42,8 +42,8 @@ interface MomentSummary {
   timestamp: string;
   media_cid: string;
   tags: string[];
-  sealed?: boolean;
-  reveals_at?: string;
+  eclipse_reveal_date?: string;
+  eclipse_locked?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,8 +100,8 @@ export async function handleListMoments(
     };
 
     if (isEclipse) {
-      summary.sealed = isSealed;
-      if (isSealed) summary.reveals_at = m.eclipse_reveal_date!;
+      summary.eclipse_locked = isSealed;
+      summary.eclipse_reveal_date = m.eclipse_reveal_date!;
     }
 
     return summary;

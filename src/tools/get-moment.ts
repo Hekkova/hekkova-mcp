@@ -13,7 +13,7 @@ export const GetMomentInputSchema = z.object({
 export type GetMomentInput = z.infer<typeof GetMomentInputSchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Eclipse sealed response (omits media CID and decryptable content)
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatTimeUntilReveal(revealDate: Date): string {
@@ -24,6 +24,13 @@ function formatTimeUntilReveal(revealDate: Date): string {
   return `${days} days, ${hours} hours`;
 }
 
+/** Strip sensitive encryption fields that must not leave the server. */
+function withoutEncryptionFields(moment: Moment): Omit<Moment, 'content_ciphertext' | 'content_iv'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { content_ciphertext, content_iv, ...rest } = moment;
+  return rest;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,7 +38,7 @@ function formatTimeUntilReveal(revealDate: Date): string {
 export async function handleGetMoment(
   rawInput: unknown,
   accountContext: AccountContext
-): Promise<Moment | object> {
+): Promise<object> {
   const parsed = GetMomentInputSchema.safeParse(rawInput);
   if (!parsed.success) {
     const err = new Error(
@@ -62,10 +69,10 @@ export async function handleGetMoment(
   // TODO: Replace with Lit Protocol time-based ACC for on-chain enforcement
   if (moment.category === 'eclipse' && moment.eclipse_reveal_date) {
     const revealDate = new Date(moment.eclipse_reveal_date);
-    const now = new Date();
+    const isLocked = new Date() < revealDate;
 
-    if (now < revealDate) {
-      // Sealed: return only metadata, no media CID or decryptable content
+    if (isLocked) {
+      // Content must not be accessible before reveal — omit all CIDs and ciphertext
       return {
         block_id: moment.block_id,
         token_id: moment.token_id,
@@ -74,33 +81,28 @@ export async function handleGetMoment(
         category: moment.category,
         tags: moment.tags,
         timestamp: moment.timestamp,
-        sealed: true,
-        reveals_at: moment.eclipse_reveal_date,
+        eclipse_reveal_date: moment.eclipse_reveal_date,
+        eclipse_locked: true,
         time_until_reveal: formatTimeUntilReveal(revealDate),
       };
     }
 
-    // Revealed: return everything with sealed metadata
+    // Revealed: return full moment minus raw encryption fields, with eclipse status
     return {
-      ...moment,
-      sealed: false,
-      revealed_at: moment.eclipse_reveal_date,
+      ...withoutEncryptionFields(moment),
+      eclipse_locked: false,
     };
   }
 
   // ── Encrypted content note ────────────────────────────────────────────────
-  // For encrypted moments, the media_cid points to Lit-encrypted ciphertext.
-  // The dashboard can request decryption via POST /api/moments/:block_id/decrypt.
-  // TODO: Migrate to client-side Lit decryption so the server never sees plaintext.
+  // content_ciphertext and content_iv are server-side only; strip from response.
+  // The dashboard requests decryption via POST /api/moments/:block_id/decrypt.
   if (moment.encrypted) {
     return {
-      ...moment,
-      decryption_available: !!(moment.lit_acc_hash && moment.lit_acc_conditions),
-      decryption_note: moment.lit_acc_hash
-        ? 'Content is encrypted. Use POST /api/moments/:block_id/decrypt to access it.'
-        : 'Content is encrypted (legacy stub — re-mint to enable decryption).',
+      ...withoutEncryptionFields(moment),
+      decryption_note: 'Content is encrypted. Use POST /api/moments/:block_id/decrypt to access it.',
     };
   }
 
-  return moment;
+  return withoutEncryptionFields(moment);
 }

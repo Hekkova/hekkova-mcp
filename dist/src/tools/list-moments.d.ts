@@ -42,8 +42,8 @@ interface MomentSummary {
     timestamp: string;
     media_cid: string;
     tags: string[];
-    sealed?: boolean;
-    reveals_at?: string;
+    eclipse_reveal_date?: string;
+    eclipse_locked?: boolean;
 }
 export declare function handleListMoments(rawInput: unknown, accountContext: AccountContext): Promise<ListMomentsResponse>;
 export {};

@@ -500,6 +500,17 @@ app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), async
                 }
             }
         }
+        if (event.type === 'customer.subscription.deleted') {
+            const subscription = event.data.object;
+            const accountId = subscription.metadata?.account_id;
+            if (accountId) {
+                await setLegacyPlan(accountId, false);
+                console.log(`[stripe] Legacy plan cancelled for account ${accountId}`);
+            }
+            else {
+                console.warn('[stripe] customer.subscription.deleted received without account_id in subscription metadata');
+            }
+        }
         res.json({ received: true });
     }
     catch (err) {

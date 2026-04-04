@@ -3,7 +3,7 @@ export interface MintPack {
     id: string;
     name: string;
     description: string;
-    priceInCents: number;
+    priceId: string;
     mintsAdded: number;
     isLegacyPlan: boolean;
 }

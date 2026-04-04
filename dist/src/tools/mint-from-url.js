@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import dns from 'dns/promises';
-import { executeMint } from './mint-moment.js';
+import { executeMint, SourceMetadataSchema } from './mint-moment.js';
 import { config } from '../config.js';
 import { getStagingUpload, deleteStagingUpload } from '../services/database.js';
 import { unpinFromPinata } from '../services/storage.js';
@@ -84,6 +84,7 @@ export const MintFromUrlInputSchema = z.object({
         .default(null),
     eclipse_reveal_date: z.string().optional(),
     tags: z.array(z.string()).max(20).optional(),
+    source: SourceMetadataSchema.optional(),
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform detection
@@ -233,7 +234,7 @@ export async function handleMintFromUrl(rawInput, accountContext) {
         err.code = 'INVALID_INPUT';
         throw err;
     }
-    const { url, title: titleOverride, phase, category, eclipse_reveal_date, tags } = parsed.data;
+    const { url, title: titleOverride, phase, category, eclipse_reveal_date, tags, source } = parsed.data;
     console.log(`[${new Date().toISOString()}] mint_from_url | account=${accountContext.account.id} | url=${url}`);
     // ── Staging URL — bypass SSRF check and fetch directly from Pinata ─────────
     const stagingMatch = url.match(STAGING_URL_RE);
@@ -265,7 +266,7 @@ export async function handleMintFromUrl(rawInput, accountContext) {
         }
         const mediaType = resolveMediaType(staging.content_type) ?? 'image/jpeg';
         const title = titleOverride ?? `Staged upload ${key.slice(0, 8)}`;
-        const mintResult = await executeMint({ title, media: mediaBuffer.toString('base64'), media_type: mediaType, phase, category, eclipse_reveal_date, tags }, accountContext, { source_url: url, source_platform: 'staging' });
+        const mintResult = await executeMint({ title, media: mediaBuffer.toString('base64'), media_type: mediaType, phase, category, eclipse_reveal_date, tags, source }, accountContext, { source_url: url, source_platform: 'staging' });
         // Clean up immediately after a successful mint — don't wait for TTL
         await deleteStagingUpload(key);
         unpinFromPinata(staging.cid).catch(() => undefined);
@@ -281,6 +282,7 @@ export async function handleMintFromUrl(rawInput, accountContext) {
         category,
         eclipse_reveal_date,
         tags,
+        source,
     }, accountContext, { source_url: url, source_platform: platform });
     return {
         ...mintResult,

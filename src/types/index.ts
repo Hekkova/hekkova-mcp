@@ -31,6 +31,8 @@ export type MediaType =
   | 'image/jpeg'
   | 'image/gif'
   | 'video/mp4'
+  | 'video/webm'
+  | 'video/quicktime'
   | 'audio/mp3'
   | 'audio/wav'
   | 'text/plain';
@@ -81,6 +83,8 @@ export interface Moment {
   polygon_tx: string;
   source_url: string | null;
   source_platform: string | null;
+  source_capture_video_cid: string | null;
+  source_capture_video_size_bytes: number | null;
   eclipse_reveal_date: string | null;
   tags: string[];
   timestamp: string;
@@ -118,6 +122,8 @@ export interface MintResult {
   source_url?: string;
   source_platform?: string;
   extracted_title?: string;
+  // present on video mints
+  video_cid?: string;
 }
 
 /**

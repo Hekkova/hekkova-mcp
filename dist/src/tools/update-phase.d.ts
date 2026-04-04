@@ -15,7 +15,8 @@ interface UpdatePhaseResponse {
     block_id: string;
     previous_phase: Phase;
     new_phase: Phase;
-    fee_charged: number;
+    credits_used: number;
+    balance_remaining: number;
     new_html_cid: string;
     message: string;
 }

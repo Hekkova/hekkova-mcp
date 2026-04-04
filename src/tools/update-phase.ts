@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { getMomentByBlockId, updateMomentWithNewContent } from '../services/database.js';
+import { getMomentByBlockId, updateMomentWithNewContent, decrementMintsBy, logPhaseShift, getPhaseShiftCount } from '../services/database.js';
 import { shouldEncrypt, encryptContent, decryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
 import { pinHtmlFile, uploadHtmlToLighthouse } from '../services/storage.js';
 import { buildMomentHTML } from '../templates/moment-html.js';
@@ -25,10 +25,6 @@ function isEncryptedTier(phase: Phase): boolean {
   return phase !== 'full_moon';
 }
 
-function isBoundaryCrossing(fromPhase: Phase, toPhase: Phase): boolean {
-  return isEncryptedTier(fromPhase) !== isEncryptedTier(toPhase);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Response type
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,10 +33,24 @@ interface UpdatePhaseResponse {
   block_id: string;
   previous_phase: Phase;
   new_phase: Phase;
-  fee_charged: number;
+  credits_used: number;
+  balance_remaining: number;
   new_html_cid: string;
   message: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Legacy Plan monthly window helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function currentMonthWindow(): { start: Date; end: Date } {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+  return { start, end };
+}
+
+const LEGACY_FREE_PHASE_SHIFTS_PER_MONTH = 10;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
@@ -85,27 +95,39 @@ export async function handleUpdatePhase(
       block_id,
       previous_phase: previousPhase,
       new_phase: targetPhase,
-      fee_charged: 0,
+      credits_used: 0,
+      balance_remaining: account.mints_remaining,
       new_html_cid: moment.media_cid,
       message: 'Phase is already set to the requested value. No change made.',
     };
   }
 
-  // 2. Check boundary crossing payment
-  const crossing = isBoundaryCrossing(previousPhase, targetPhase);
-  if (crossing && !account.legacy_plan) {
+  // 2. Determine credit cost: video moments cost 2 credits, others cost 1
+  const isVideoMoment = !!moment.source_capture_video_cid;
+  const creditCost = isVideoMoment ? 2 : 1;
+
+  // 3. Legacy Plan: check monthly free allowance before touching credits
+  let isFreeShift = false;
+  if (account.legacy_plan) {
+    const { start, end } = currentMonthWindow();
+    const shiftsThisMonth = await getPhaseShiftCount(account.id, start, end);
+    isFreeShift = shiftsThisMonth < LEGACY_FREE_PHASE_SHIFTS_PER_MONTH;
+  }
+
+  // 4. Credit check (only if this shift is not free)
+  if (!isFreeShift && account.mints_remaining < creditCost) {
     throw Object.assign(
       new Error(
-        `Changing between encrypted phases and Full Moon costs $0.49 (re-encryption required). ` +
-        `Purchase access at ${config.purchaseUrl}. Legacy Plan accounts can do this for free.`
+        `Insufficient credits for Phase Shift. ` +
+        `${isVideoMoment ? 'Video' : 'Text/image'} moments cost ${creditCost} credit(s). ` +
+        `You have ${account.mints_remaining} credit(s) remaining. ` +
+        `Purchase more at ${config.purchaseUrl}`
       ),
-      { code: 'PHASE_SHIFT_PAYMENT_REQUIRED' }
+      { code: 'INSUFFICIENT_BALANCE' }
     );
   }
 
-  // 3. Recover plaintext content
-  //    - From encrypted moment: decrypt Supabase-stored ciphertext with master key
-  //    - From full_moon moment: ciphertext stored if passphrase was set up at mint time
+  // 5. Recover plaintext content
   let plaintextContent: string;
 
   if (moment.content_ciphertext && moment.content_iv) {
@@ -132,7 +154,7 @@ export async function handleUpdatePhase(
     );
   }
 
-  // 4. Rebuild the IPFS HTML viewer for the new phase
+  // 6. Rebuild the IPFS HTML viewer for the new phase
   const needsEncryption = shouldEncrypt(targetPhase);
 
   let newCiphertext: string | null = null;
@@ -141,7 +163,6 @@ export async function handleUpdatePhase(
   let newLighthouseCid: string | null;
 
   if (needsEncryption) {
-    // Re-encrypt content with master key (same key, just rebuild HTML with new phase badge)
     const [encrypted, htmlFields] = await Promise.all([
       encryptContent(plaintextContent, account.id),
       getOwnerHtmlEncryptionFields(account.id),
@@ -177,8 +198,7 @@ export async function handleUpdatePhase(
     newHtmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
     newLighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   } else {
-    // Shifting to full_moon — plaintext HTML, no passphrase required
-    // Still store encrypted copy in Supabase so future shifts back to encrypted work
+    // Shifting to full_moon — plaintext HTML
     if (account.passphrase_setup_complete) {
       const encrypted = await encryptContent(plaintextContent, account.id);
       newCiphertext = encrypted.ciphertext;
@@ -202,7 +222,7 @@ export async function handleUpdatePhase(
     newLighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   }
 
-  // 5. Update the moment record in Supabase
+  // 7. Update the moment record in Supabase
   await updateMomentWithNewContent(block_id, account.id, {
     phase: targetPhase,
     encrypted: needsEncryption,
@@ -212,23 +232,34 @@ export async function handleUpdatePhase(
     content_iv: newIv,
   });
 
-  let feeCharged = 0.0;
-  let message: string;
+  // 8. Log the phase shift (for Legacy Plan monthly tracking)
+  await logPhaseShift(account.id, block_id);
 
-  if (account.legacy_plan) {
-    message = `Phase shifted from ${previousPhase} to ${targetPhase}. Unlimited Phase Shifts included with your Legacy Plan.`;
-  } else if (crossing) {
-    feeCharged = 0.49;
-    message = `Phase shifted. Phase Shift fee: $0.49. A new IPFS file has been pinned at ${newHtmlCid}.`;
+  // 9. Deduct credits (unless this is a free Legacy Plan shift)
+  const creditsUsed = isFreeShift ? 0 : creditCost;
+  if (creditsUsed > 0) {
+    await decrementMintsBy(account.id, creditsUsed);
+  }
+
+  const balanceRemaining = Math.max(0, account.mints_remaining - creditsUsed);
+
+  let message: string;
+  if (isFreeShift) {
+    const { start, end } = currentMonthWindow();
+    const shiftsThisMonth = await getPhaseShiftCount(account.id, start, end);
+    const remaining = Math.max(0, LEGACY_FREE_PHASE_SHIFTS_PER_MONTH - shiftsThisMonth);
+    message = `Phase shifted from ${previousPhase} to ${targetPhase}. Free (Legacy Plan — ${remaining} free shift${remaining === 1 ? '' : 's'} remaining this month).`;
   } else {
-    message = `Phase shifted from ${previousPhase} to ${targetPhase}. No charge for transitions between private phases.`;
+    const isCrossing = isEncryptedTier(previousPhase) !== isEncryptedTier(targetPhase);
+    message = `Phase shifted from ${previousPhase} to ${targetPhase}. ${creditsUsed} credit${creditsUsed === 1 ? '' : 's'} deducted${isCrossing ? ' (re-encryption required)' : ''}.`;
   }
 
   return {
     block_id,
     previous_phase: previousPhase,
     new_phase: targetPhase,
-    fee_charged: feeCharged,
+    credits_used: creditsUsed,
+    balance_remaining: balanceRemaining,
     new_html_cid: newHtmlCid,
     message,
   };

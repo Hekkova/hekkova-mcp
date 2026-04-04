@@ -12,7 +12,7 @@ import { z } from 'zod';
 import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
 import multer from 'multer';
-import { handleMintMoment, executeMint } from './tools/mint-moment.js';
+import { handleMintMoment, executeMint, SourceMetadataSchema } from './tools/mint-moment.js';
 import { pinMedia, unpinFromPinata } from './services/storage.js';
 import { insertStagingUpload, getStagingUpload, deleteStagingUpload, deleteExpiredStagingUploads } from './services/database.js';
 import { handleMintFromUrl } from './tools/mint-from-url.js';
@@ -202,11 +202,11 @@ function createMcpServer() {
         description: 'The permanent memory layer for AI agents. Mint moments to the blockchain on behalf of individuals and companies. Encrypted by default. Stored on IPFS (Filecoin archival coming soon).',
     });
     // ── mint_moment ────────────────────────────────────────────────────────────
-    server.tool('mint_moment', 'Mint text content permanently to the blockchain. For images, video, and audio, use upload_media followed by mint_from_url instead — base64 binary payloads are unreliable over MCP transport. Encrypts content based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID. Minting a new moment at any phase (including Full Moon) costs one mint credit — there is no additional fee for any phase on new mints. The $0.49 Phase Shift fee only applies when changing an existing moment\'s phase via the update_phase tool.', {
+    server.tool('mint_moment', 'Mint content permanently to the blockchain. Encrypts content based on privacy phase, pins to IPFS, and mints an ERC-721 NFT on Polygon. Returns a Block ID. Text/image mints cost 1 credit. Video mints (mp4, webm, mov) cost 2 credits and support files up to 50MB. Supports optional source metadata for provenance tracking (capture timestamp, platform, author, engagement, etc.).', {
         title: z.string().max(200).describe('Name of the moment'),
-        media: z.string().describe('Base64-encoded media content (photo, video, audio, or text). Max 50MB.'),
+        media: z.string().describe('Base64-encoded media content. Images, text, or video (mp4/webm/mov, max 50MB). For audio use upload_media + mint_from_url.'),
         media_type: z
-            .enum(['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain'])
+            .enum(['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime', 'audio/mp3', 'audio/wav', 'text/plain'])
             .describe('MIME type of the media content'),
         phase: z
             .enum(['new_moon', 'crescent', 'gibbous', 'full_moon'])
@@ -224,6 +224,7 @@ function createMcpServer() {
             .optional()
             .describe('Required if category is eclipse. Date/time when content can be decrypted.'),
         tags: z.array(z.string()).max(20).optional().describe('Optional tags for organisation'),
+        source: SourceMetadataSchema.optional().describe('Optional provenance metadata. All fields optional. Accepted fields: source_platform (x/instagram/facebook/reddit/youtube/tiktok/linkedin/mastodon/bluesky/threads/other), source_content_type (post/reply/repost/quote/story/reel/thread/article/comment/photo/video/poll/other), source_original_url, source_author_handle, source_author_name, source_original_timestamp (ISO 8601), source_capture_timestamp (ISO 8601), source_capture_method (agent/manual/api/screenshot), source_agent_id, source_engagement_likes/reposts/replies/views (integers), source_is_reply/source_is_repost (booleans), source_reply_to_url, source_thread_id, source_thread_position (integer), source_original_media_urls (string array), source_capture_content_hash (must start with "sha256:"), source_capture_video_cid, source_capture_video_size_bytes. Freeform extension fields prefixed with source_extra_ are also accepted (string or number values only).'),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -241,7 +242,7 @@ function createMcpServer() {
         }
     });
     // ── mint_from_url ──────────────────────────────────────────────────────────
-    server.tool('mint_from_url', 'Mint a moment from a public URL. Hekkova fetches the content, extracts media and metadata, and mints it to the blockchain. Works with public social media posts, image URLs, and web pages.', {
+    server.tool('mint_from_url', 'Mint a moment from a public URL. Hekkova fetches the content, extracts media and metadata, and mints it to the blockchain. Works with public social media posts, image URLs, and web pages. Accepts optional source metadata for provenance tracking (same schema as mint_moment).', {
         url: z.string().url().describe('Public URL to mint from.'),
         title: z.string().max(200).optional().describe('Override title. Hekkova extracts one if omitted.'),
         phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).default('new_moon'),
@@ -250,6 +251,7 @@ function createMcpServer() {
             .nullable()
             .default(null),
         tags: z.array(z.string()).max(20).optional(),
+        source: SourceMetadataSchema.optional().describe('Optional provenance metadata. Same schema as mint_moment source parameter.'),
     }, async (input) => {
         const req = _currentRequest;
         if (!req)
@@ -310,7 +312,7 @@ function createMcpServer() {
         }
     });
     // ── update_phase ───────────────────────────────────────────────────────────
-    server.tool('update_phase', 'Change the privacy phase of an existing moment. Free between encrypted tiers (New Moon, Crescent, Gibbous). Costs $0.49 when transitioning to/from Full Moon (re-encryption required). Free for Legacy Plan accounts.', {
+    server.tool('update_phase', 'Change the privacy phase of an existing moment. Phase Shifts cost credits: 1 credit for text/image moments, 2 credits for video moments. Legacy Plan subscribers get 10 free Phase Shifts per calendar month; additional shifts beyond 10 deduct credits normally.', {
         block_id: z.string().describe('Block ID of the moment to update'),
         new_phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).describe('Target privacy phase'),
     }, async (input) => {

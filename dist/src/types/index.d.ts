@@ -20,7 +20,7 @@ export type Category = 'super_moon' | 'blue_moon' | 'super_blue_moon' | 'eclipse
 /**
  * Supported MIME types for moment media.
  */
-export type MediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'video/mp4' | 'audio/mp3' | 'audio/wav' | 'text/plain';
+export type MediaType = 'image/png' | 'image/jpeg' | 'image/gif' | 'video/mp4' | 'video/webm' | 'video/quicktime' | 'audio/mp3' | 'audio/wav' | 'text/plain';
 /**
  * Hekkova account record (maps to the `accounts` table in Supabase).
  */
@@ -66,6 +66,8 @@ export interface Moment {
     polygon_tx: string;
     source_url: string | null;
     source_platform: string | null;
+    source_capture_video_cid: string | null;
+    source_capture_video_size_bytes: number | null;
     eclipse_reveal_date: string | null;
     tags: string[];
     timestamp: string;
@@ -100,6 +102,7 @@ export interface MintResult {
     source_url?: string;
     source_platform?: string;
     extracted_title?: string;
+    video_cid?: string;
 }
 /**
  * Heir record (maps to the `heirs` table in Supabase).

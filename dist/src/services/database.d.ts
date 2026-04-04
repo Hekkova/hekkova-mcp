@@ -48,6 +48,7 @@ export declare function updateMomentWithNewContent(blockId: string, accountId: s
     content_iv: string | null;
 }): Promise<Moment>;
 export declare function decrementMints(accountId: string): Promise<void>;
+export declare function decrementMintsBy(accountId: string, amount: number): Promise<void>;
 export declare function incrementTotalMinted(accountId: string): Promise<void>;
 export declare function getAllMoments(accountId: string): Promise<Moment[]>;
 export declare function getAccount(accountId: string): Promise<Account | null>;
@@ -99,5 +100,15 @@ export declare function deleteExpiredStagingUploads(): Promise<{
     deleted: number;
     cids: string[];
 }>;
+/**
+ * Log a phase shift for an account. Used to track Legacy Plan monthly allowance.
+ * Non-fatal — logs a warning and continues if the table does not exist yet.
+ */
+export declare function logPhaseShift(accountId: string, momentId: string): Promise<void>;
+/**
+ * Return the number of phase shifts logged for an account within the given date range.
+ * Returns 0 on any error (so Legacy Plan allowance is never blocked by a missing table).
+ */
+export declare function getPhaseShiftCount(accountId: string, monthStart: Date, monthEnd: Date): Promise<number>;
 export declare function seedTestData(): Promise<void>;
 //# sourceMappingURL=database.d.ts.map

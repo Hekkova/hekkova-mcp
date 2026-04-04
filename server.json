@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "com.hekkova/mcp",
+  "description": "TPermanent memory layer for AI agents. Mint moments to the Polygon blockchain via MCP.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/Hekkova/hekkova-mcp",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.hekkova.com/mcp"
+    }
+  ]
+}

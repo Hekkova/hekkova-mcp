@@ -1,11 +1,76 @@
 import { z } from 'zod';
 import sharp from 'sharp';
 import { shouldEncrypt, encryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
-import { pinHtmlFile, pinMetadata, uploadHtmlToLighthouse } from '../services/storage.js';
+import { pinHtmlFile, pinMetadata, pinMedia, uploadHtmlToLighthouse } from '../services/storage.js';
 import { mintNFT } from '../services/blockchain.js';
-import { decrementMints, incrementTotalMinted, insertMoment } from '../services/database.js';
+import { decrementMintsBy, incrementTotalMinted, insertMoment } from '../services/database.js';
 import { buildMomentHTML } from '../templates/moment-html.js';
 import { config } from '../config.js';
+// ─────────────────────────────────────────────────────────────────────────────
+// Source Metadata Schema
+// ─────────────────────────────────────────────────────────────────────────────
+const KNOWN_SOURCE_KEYS = new Set([
+    'source_platform', 'source_content_type', 'source_original_url', 'source_author_handle',
+    'source_author_name', 'source_original_timestamp', 'source_capture_timestamp',
+    'source_capture_method', 'source_agent_id', 'source_engagement_likes',
+    'source_engagement_reposts', 'source_engagement_replies', 'source_engagement_views',
+    'source_is_reply', 'source_is_repost', 'source_reply_to_url', 'source_thread_id',
+    'source_thread_position', 'source_original_media_urls', 'source_capture_content_hash',
+    'source_capture_video_cid', 'source_capture_video_size_bytes',
+]);
+export const SourceMetadataSchema = z
+    .object({
+    source_platform: z
+        .enum(['x', 'instagram', 'facebook', 'reddit', 'youtube', 'tiktok', 'linkedin', 'mastodon', 'bluesky', 'threads', 'other'])
+        .optional(),
+    source_content_type: z
+        .enum(['post', 'reply', 'repost', 'quote', 'story', 'reel', 'thread', 'article', 'comment', 'photo', 'video', 'poll', 'other'])
+        .optional(),
+    source_original_url: z.string().optional(),
+    source_author_handle: z.string().optional(),
+    source_author_name: z.string().optional(),
+    source_original_timestamp: z.string().optional(),
+    source_capture_timestamp: z.string().optional(),
+    source_capture_method: z.enum(['agent', 'manual', 'api', 'screenshot']).optional(),
+    source_agent_id: z.string().optional(),
+    source_engagement_likes: z.number().int().optional(),
+    source_engagement_reposts: z.number().int().optional(),
+    source_engagement_replies: z.number().int().optional(),
+    source_engagement_views: z.number().int().optional(),
+    source_is_reply: z.boolean().optional(),
+    source_is_repost: z.boolean().optional(),
+    source_reply_to_url: z.string().optional(),
+    source_thread_id: z.string().optional(),
+    source_thread_position: z.number().int().optional(),
+    source_original_media_urls: z.array(z.string()).optional(),
+    source_capture_content_hash: z
+        .string()
+        .refine((v) => v.startsWith('sha256:'), { message: 'source_capture_content_hash must start with "sha256:"' })
+        .optional(),
+    source_capture_video_cid: z.string().optional(),
+    source_capture_video_size_bytes: z.number().int().optional(),
+})
+    .catchall(z.unknown())
+    .superRefine((val, ctx) => {
+    for (const [key, value] of Object.entries(val)) {
+        if (!KNOWN_SOURCE_KEYS.has(key)) {
+            if (!key.startsWith('source_extra_')) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `Unknown source field: "${key}". Extra fields must be prefixed with source_extra_`,
+                    path: [key],
+                });
+            }
+            else if (value !== null && typeof value === 'object') {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'source_extra_ values must be string or number, not object or array',
+                    path: [key],
+                });
+            }
+        }
+    }
+});
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -17,6 +82,8 @@ export const MintMomentInputSchema = z.object({
         'image/jpeg',
         'image/gif',
         'video/mp4',
+        'video/webm',
+        'video/quicktime',
         'audio/mp3',
         'audio/wav',
         'text/plain',
@@ -30,6 +97,7 @@ export const MintMomentInputSchema = z.object({
     timestamp: z.string().optional(),
     eclipse_reveal_date: z.string().optional(),
     tags: z.array(z.string()).max(20).optional(),
+    source: SourceMetadataSchema.optional(),
 });
 // ─────────────────────────────────────────────────────────────────────────────
 // Max media size: 50 MB (base64 is ~4/3 the size of binary)
@@ -83,17 +151,28 @@ export async function executeMint(input, accountContext, overrides = {}) {
     const { base64: compressedMedia, mediaType: effectiveMediaType } = await maybeCompressImage(input.media, input.media_type);
     input = { ...input, media: compressedMedia, media_type: effectiveMediaType };
     const binarySize = base64DecodedSize(input.media);
-    const isVideoOrAudio = input.media_type.startsWith('video/') || input.media_type.startsWith('audio/');
-    if (isVideoOrAudio && binarySize > 10 * 1024 * 1024) {
-        throw Object.assign(new Error(`Video and audio files over 10MB cannot be sent via base64 transport (received ${(binarySize / 1024 / 1024).toFixed(1)}MB). ` +
+    const isVideo = input.media_type.startsWith('video/');
+    const isAudio = input.media_type.startsWith('audio/');
+    // Audio files over 10MB are not suitable for base64 transport
+    if (isAudio && binarySize > 10 * 1024 * 1024) {
+        throw Object.assign(new Error(`Audio files over 10MB cannot be sent via base64 transport (received ${(binarySize / 1024 / 1024).toFixed(1)}MB). ` +
             `Use mint_from_url with a public URL, or upload directly at https://mcp.hekkova.com/api/upload.`), { code: 'MEDIA_TOO_LARGE' });
+    }
+    // Video hard cap: 50MB
+    if (isVideo && binarySize > MAX_MEDIA_BYTES) {
+        throw Object.assign(new Error(`Video exceeds 50MB limit (received ${(binarySize / 1024 / 1024).toFixed(1)}MB)`), { code: 'MEDIA_TOO_LARGE' });
     }
     if (binarySize > MAX_MEDIA_BYTES) {
         throw Object.assign(new Error(`Media exceeds 50MB limit (received ${(binarySize / 1024 / 1024).toFixed(1)}MB)`), { code: 'MEDIA_TOO_LARGE' });
     }
-    // 3. Check mint balance
-    if (account.mints_remaining <= 0) {
-        throw Object.assign(new Error(`No mint credits remaining. Purchase more at ${config.purchaseUrl}`), { code: 'INSUFFICIENT_BALANCE' });
+    // 3. Determine credit cost: video = 2 credits, everything else = 1
+    const creditCost = isVideo ? 2 : 1;
+    // Check mint balance
+    if (account.mints_remaining < creditCost) {
+        const msg = creditCost === 2
+            ? `Video mints cost 2 credits. You have ${account.mints_remaining} credit(s) remaining. Purchase more at ${config.purchaseUrl}`
+            : `No mint credits remaining. Purchase more at ${config.purchaseUrl}`;
+        throw Object.assign(new Error(msg), { code: 'INSUFFICIENT_BALANCE' });
     }
     const phase = input.phase;
     const timestamp = input.timestamp ?? new Date().toISOString();
@@ -102,7 +181,29 @@ export async function executeMint(input, accountContext, overrides = {}) {
     if (needsEncryption && !account.passphrase_setup_complete) {
         throw Object.assign(new Error('Passphrase setup required. Please complete setup in the Hekkova dashboard at app.hekkova.com before minting encrypted moments.'), { code: 'PASSPHRASE_SETUP_REQUIRED' });
     }
-    // 5. Encrypt content and build the IPFS HTML viewer
+    // 5. Pin raw video to IPFS (if video media) and compute size
+    let videoCid = null;
+    let videoSizeBytes = null;
+    if (isVideo) {
+        const ext = input.media_type === 'video/mp4' ? 'mp4'
+            : input.media_type === 'video/webm' ? 'webm'
+                : 'mov';
+        videoSizeBytes = binarySize;
+        videoCid = await pinMedia(input.media, input.media_type, `video.${ext}`);
+    }
+    // 6. Build final source metadata (merge agent-provided + auto-generated video fields)
+    const sourceMetadata = (() => {
+        const base = input.source ? { ...input.source } : null;
+        if (videoCid) {
+            return {
+                ...(base ?? {}),
+                source_capture_video_cid: videoCid,
+                source_capture_video_size_bytes: videoSizeBytes,
+            };
+        }
+        return base;
+    })();
+    // 7. Encrypt content and build the IPFS HTML viewer
     let htmlCid;
     let lighthouseCid;
     let contentCiphertext = null;
@@ -166,7 +267,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
         htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
         lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
     }
-    // 6. Build NFT metadata JSON (ERC-721 / OpenSea compatible)
+    // 8. Build NFT metadata JSON (ERC-721 / OpenSea compatible)
     const contentPreview = needsEncryption
         ? 'Encrypted moment'
         : input.media_type === 'text/plain'
@@ -203,18 +304,22 @@ export async function executeMint(input, accountContext, overrides = {}) {
             tags: input.tags ?? [],
         },
     };
-    // 7. Pin metadata to IPFS
+    // Include source metadata as top-level key in IPFS payload
+    if (sourceMetadata) {
+        metadata['source'] = sourceMetadata;
+    }
+    // 9. Pin metadata to IPFS
     const metadataCid = await pinMetadata(metadata);
-    // 8. Mint NFT on Polygon (tokenURI = ipfs://metadataCid)
+    // 10. Mint NFT on Polygon (tokenURI = ipfs://metadataCid)
     const { tokenId, txHash, blockId } = await mintNFT({
         metadataCid,
         accountId: account.id,
         walletAddress: account.wallet_address ?? '',
     });
-    // 9. Update account counters
-    await decrementMints(account.id);
+    // 11. Update account counters (deduct creditCost credits)
+    await decrementMintsBy(account.id, creditCost);
     await incrementTotalMinted(account.id);
-    // 10. Persist moment record
+    // 12. Persist moment record
     const moment = await insertMoment({
         account_id: account.id,
         block_id: blockId,
@@ -235,12 +340,14 @@ export async function executeMint(input, accountContext, overrides = {}) {
         polygon_tx: txHash,
         source_url: overrides.source_url ?? null,
         source_platform: overrides.source_platform ?? null,
+        source_capture_video_cid: videoCid,
+        source_capture_video_size_bytes: videoSizeBytes,
         eclipse_reveal_date: input.eclipse_reveal_date ?? null,
         tags: input.tags ?? [],
         timestamp,
     });
     void moment;
-    const balanceRemaining = Math.max(0, account.mints_remaining - 1);
+    const balanceRemaining = Math.max(0, account.mints_remaining - creditCost);
     const result = {
         block_id: blockId,
         token_id: tokenId,
@@ -257,6 +364,8 @@ export async function executeMint(input, accountContext, overrides = {}) {
         result.source_url = overrides.source_url;
     if (overrides.source_platform)
         result.source_platform = overrides.source_platform;
+    if (videoCid)
+        result.video_cid = videoCid;
     return result;
 }
 // ─────────────────────────────────────────────────────────────────────────────

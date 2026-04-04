@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import dns from 'dns/promises';
-import { executeMint } from './mint-moment.js';
+import { executeMint, SourceMetadataSchema } from './mint-moment.js';
 import type { AccountContext, MediaType, MintResult } from '../types/index.js';
 import { config } from '../config.js';
 import { getStagingUpload, deleteStagingUpload } from '../services/database.js';
@@ -94,6 +94,7 @@ export const MintFromUrlInputSchema = z.object({
     .default(null),
   eclipse_reveal_date: z.string().optional(),
   tags: z.array(z.string()).max(20).optional(),
+  source: SourceMetadataSchema.optional(),
 });
 
 export type MintFromUrlInput = z.infer<typeof MintFromUrlInputSchema>;
@@ -289,7 +290,7 @@ export async function handleMintFromUrl(
     throw err;
   }
 
-  const { url, title: titleOverride, phase, category, eclipse_reveal_date, tags } = parsed.data;
+  const { url, title: titleOverride, phase, category, eclipse_reveal_date, tags, source } = parsed.data;
 
   console.log(
     `[${new Date().toISOString()}] mint_from_url | account=${accountContext.account.id} | url=${url}`
@@ -331,7 +332,7 @@ export async function handleMintFromUrl(
     const title = titleOverride ?? `Staged upload ${key.slice(0, 8)}`;
 
     const mintResult = await executeMint(
-      { title, media: mediaBuffer.toString('base64'), media_type: mediaType, phase, category, eclipse_reveal_date, tags },
+      { title, media: mediaBuffer.toString('base64'), media_type: mediaType, phase, category, eclipse_reveal_date, tags, source },
       accountContext,
       { source_url: url, source_platform: 'staging' }
     );
@@ -355,6 +356,7 @@ export async function handleMintFromUrl(
       category,
       eclipse_reveal_date,
       tags,
+      source,
     },
     accountContext,
     { source_url: url, source_platform: platform }

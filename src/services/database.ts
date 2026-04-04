@@ -275,22 +275,22 @@ export async function updateMomentWithNewContent(
 }
 
 export async function decrementMints(accountId: string): Promise<void> {
+  return decrementMintsBy(accountId, 1);
+}
+
+export async function decrementMintsBy(accountId: string, amount: number): Promise<void> {
   const supabase = getSupabase();
 
-  const { error } = await supabase.rpc('decrement_mints', { account_id: accountId });
-  if (error) {
-    // Fallback: manual decrement
-    const { data: acc } = await supabase
+  const { data: acc } = await supabase
+    .from('accounts')
+    .select('mints_remaining')
+    .eq('id', accountId)
+    .single();
+  if (acc) {
+    await supabase
       .from('accounts')
-      .select('mints_remaining')
-      .eq('id', accountId)
-      .single();
-    if (acc) {
-      await supabase
-        .from('accounts')
-        .update({ mints_remaining: Math.max(0, (acc as { mints_remaining: number }).mints_remaining - 1) })
-        .eq('id', accountId);
-    }
+      .update({ mints_remaining: Math.max(0, (acc as { mints_remaining: number }).mints_remaining - amount) })
+      .eq('id', accountId);
   }
 }
 
@@ -695,6 +695,64 @@ export async function deleteExpiredStagingUploads(): Promise<{ deleted: number; 
   const keys = (data as { key: string; cid: string }[]).map((r) => r.key);
   await supabase.from('staging_uploads').delete().in('key', keys);
   return { deleted: keys.length, cids };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase Shift Logs — tracks per-account phase shifts for Legacy Plan monthly allowance
+//
+// Required migration — run once in Supabase SQL editor:
+//
+//   CREATE TABLE IF NOT EXISTS phase_shift_logs (
+//     id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+//     account_id   UUID        NOT NULL REFERENCES accounts(id),
+//     moment_id    TEXT        NOT NULL,
+//     created_at   TIMESTAMPTZ DEFAULT NOW()
+//   );
+//   CREATE INDEX IF NOT EXISTS phase_shift_logs_account_created ON phase_shift_logs(account_id, created_at);
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Log a phase shift for an account. Used to track Legacy Plan monthly allowance.
+ * Non-fatal — logs a warning and continues if the table does not exist yet.
+ */
+export async function logPhaseShift(accountId: string, momentId: string): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from('phase_shift_logs')
+    .insert({ account_id: accountId, moment_id: momentId });
+  if (error) {
+    if (error.code === '42P01') {
+      console.warn('[db] phase_shift_logs table missing — run migration to enable Legacy Plan monthly tracking');
+    } else {
+      console.error('[db] logPhaseShift error:', error.message);
+    }
+  }
+}
+
+/**
+ * Return the number of phase shifts logged for an account within the given date range.
+ * Returns 0 on any error (so Legacy Plan allowance is never blocked by a missing table).
+ */
+export async function getPhaseShiftCount(
+  accountId: string,
+  monthStart: Date,
+  monthEnd: Date
+): Promise<number> {
+  const supabase = getSupabase();
+  const { count, error } = await supabase
+    .from('phase_shift_logs')
+    .select('id', { count: 'exact', head: true })
+    .eq('account_id', accountId)
+    .gte('created_at', monthStart.toISOString())
+    .lt('created_at', monthEnd.toISOString());
+  if (error) {
+    if (error.code !== '42P01') {
+      console.error('[db] getPhaseShiftCount error:', error.message);
+    }
+    return 0;
+  }
+  return count ?? 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

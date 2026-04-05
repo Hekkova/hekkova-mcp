@@ -94,6 +94,20 @@ export async function handleUpdatePhase(
     );
   }
 
+  // Eclipse sealed check — content must stay locked until the reveal date
+  if (moment.category === 'eclipse' && moment.eclipse_reveal_date) {
+    const revealDate = new Date(moment.eclipse_reveal_date);
+    if (new Date() < revealDate) {
+      throw Object.assign(
+        new Error(
+          `This eclipse moment is sealed until ${moment.eclipse_reveal_date}. ` +
+          `Phase shifts are locked until the reveal date.`
+        ),
+        { code: 'ECLIPSE_SEALED' }
+      );
+    }
+  }
+
   const previousPhase = moment.phase as Phase;
   const targetPhase = new_phase as Phase;
 

@@ -26,28 +26,28 @@ export const SourceMetadataSchema = z
     source_content_type: z
         .enum(['post', 'reply', 'repost', 'quote', 'story', 'reel', 'thread', 'article', 'comment', 'photo', 'video', 'poll', 'other'])
         .optional(),
-    source_original_url: z.string().optional(),
-    source_author_handle: z.string().optional(),
-    source_author_name: z.string().optional(),
-    source_original_timestamp: z.string().optional(),
-    source_capture_timestamp: z.string().optional(),
+    source_original_url: z.string().max(2048).optional(),
+    source_author_handle: z.string().max(200).optional(),
+    source_author_name: z.string().max(200).optional(),
+    source_original_timestamp: z.string().max(100).optional(),
+    source_capture_timestamp: z.string().max(100).optional(),
     source_capture_method: z.enum(['agent', 'manual', 'api', 'screenshot']).optional(),
-    source_agent_id: z.string().optional(),
+    source_agent_id: z.string().max(200).optional(),
     source_engagement_likes: z.number().int().optional(),
     source_engagement_reposts: z.number().int().optional(),
     source_engagement_replies: z.number().int().optional(),
     source_engagement_views: z.number().int().optional(),
     source_is_reply: z.boolean().optional(),
     source_is_repost: z.boolean().optional(),
-    source_reply_to_url: z.string().optional(),
-    source_thread_id: z.string().optional(),
+    source_reply_to_url: z.string().max(2048).optional(),
+    source_thread_id: z.string().max(200).optional(),
     source_thread_position: z.number().int().optional(),
     source_original_media_urls: z.array(z.string()).optional(),
     source_capture_content_hash: z
         .string()
         .refine((v) => v.startsWith('sha256:'), { message: 'source_capture_content_hash must start with "sha256:"' })
         .optional(),
-    source_capture_video_cid: z.string().optional(),
+    source_capture_video_cid: z.string().max(200).optional(),
     source_capture_video_size_bytes: z.number().int().optional(),
 })
     .catchall(z.unknown())
@@ -96,7 +96,7 @@ export const MintMomentInputSchema = z.object({
     description: z.string().max(2000).optional(),
     timestamp: z.string().optional(),
     eclipse_reveal_date: z.string().optional(),
-    tags: z.array(z.string()).max(20).optional(),
+    tags: z.array(z.string().max(100)).max(20).optional(),
     source: SourceMetadataSchema.optional(),
 });
 // ─────────────────────────────────────────────────────────────────────────────

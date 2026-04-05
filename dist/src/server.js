@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'async_hooks';
 import { setGlobalDispatcher, Agent } from 'undici';
 import dns from 'dns';
 // Force IPv4 and increase fetch timeouts — fixes 'fetch failed' on Railway (IPv6/Undici timeout)
@@ -162,16 +163,12 @@ function applyRateLimitHeaders(res, result) {
     res.setHeader('X-RateLimit-Reset', Math.floor(result.resetAt / 1000));
 }
 // ─────────────────────────────────────────────────────────────────────────────
-// Request-scoped context store
-// A lightweight alternative to AsyncLocalStorage for Express
+// Request-scoped context store — AsyncLocalStorage
+//
+// Each /mcp request runs its tool handlers inside reqContext.run(), so
+// concurrent requests can never bleed their AccountContext into each other.
 // ─────────────────────────────────────────────────────────────────────────────
-const contextStore = new WeakMap();
-function setRequestContext(req, ctx) {
-    contextStore.set(req, ctx);
-}
-function getRequestContext(req) {
-    return contextStore.get(req);
-}
+const reqContext = new AsyncLocalStorage();
 // ─────────────────────────────────────────────────────────────────────────────
 // Error code → HTTP status mapping
 // ─────────────────────────────────────────────────────────────────────────────
@@ -187,11 +184,6 @@ function errorToMcpResponse(err) {
 // ─────────────────────────────────────────────────────────────────────────────
 // MCP Tool registration helper — wraps a handler with auth + rate limiting
 // ─────────────────────────────────────────────────────────────────────────────
-// We hold a reference to the current Express request so tool handlers can
-// access the authenticated AccountContext injected by the auth middleware.
-// The MCP SDK calls tool handlers synchronously within the same async chain as
-// the HTTP handler, so this per-request variable is safe.
-let _currentRequest = null;
 // ─────────────────────────────────────────────────────────────────────────────
 // Build the MCP server
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,13 +215,10 @@ function createMcpServer() {
             .string()
             .optional()
             .describe('Required if category is eclipse. Date/time when content can be decrypted.'),
-        tags: z.array(z.string()).max(20).optional().describe('Optional tags for organisation'),
+        tags: z.array(z.string().max(100)).max(20).optional().describe('Optional tags for organisation'),
         source: SourceMetadataSchema.optional().describe('Optional provenance metadata. All fields optional. Accepted fields: source_platform (x/instagram/facebook/reddit/youtube/tiktok/linkedin/mastodon/bluesky/threads/other), source_content_type (post/reply/repost/quote/story/reel/thread/article/comment/photo/video/poll/other), source_original_url, source_author_handle, source_author_name, source_original_timestamp (ISO 8601), source_capture_timestamp (ISO 8601), source_capture_method (agent/manual/api/screenshot), source_agent_id, source_engagement_likes/reposts/replies/views (integers), source_is_reply/source_is_repost (booleans), source_reply_to_url, source_thread_id, source_thread_position (integer), source_original_media_urls (string array), source_capture_content_hash (must start with "sha256:"), source_capture_video_cid, source_capture_video_size_bytes. Freeform extension fields prefixed with source_extra_ are also accepted (string or number values only).'),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -250,13 +239,10 @@ function createMcpServer() {
             .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
             .nullable()
             .default(null),
-        tags: z.array(z.string()).max(20).optional(),
+        tags: z.array(z.string().max(100)).max(20).optional(),
         source: SourceMetadataSchema.optional().describe('Optional provenance metadata. Same schema as mint_moment source parameter.'),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -277,10 +263,7 @@ function createMcpServer() {
         search: z.string().optional().describe('Search by title, description, or tags'),
         sort: z.enum(['newest', 'oldest']).default('newest'),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -296,10 +279,7 @@ function createMcpServer() {
     server.tool('get_moment', 'Get full details for a single minted moment, including metadata, CIDs, and blockchain transaction info.', {
         block_id: z.string().describe("The Block ID of the moment (e.g., '0x4a7f2c9b1e83')"),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -316,10 +296,7 @@ function createMcpServer() {
         block_id: z.string().describe('Block ID of the moment to update'),
         new_phase: z.enum(['new_moon', 'crescent', 'gibbous', 'full_moon']).describe('Target privacy phase'),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -335,10 +312,7 @@ function createMcpServer() {
     server.tool('export_moments', 'Export all minted moments as a downloadable JSON or CSV file. Includes Block IDs, CIDs, metadata, and timestamps.', {
         format: z.enum(['json', 'csv']).default('json').describe('Export format'),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -352,10 +326,7 @@ function createMcpServer() {
     });
     // ── get_balance ────────────────────────────────────────────────────────────
     server.tool('get_balance', 'Check remaining mint credits, current plan, and account status.', {}, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -375,12 +346,16 @@ function createMcpServer() {
             .enum(['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav'])
             .describe('MIME type of the file'),
     }, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
+        // Apply the same per-account staging rate limit used by the HTTP upload endpoint
+        const rlResult = await checkRateLimit(`${ctx.account.id}:staging`, STAGING_UPLOAD_RATE_LIMIT);
+        if (!rlResult.allowed) {
+            const retryAfter = Math.ceil((rlResult.resetAt - Date.now()) / 1000);
+            const mapped = errorToMcpResponse(Object.assign(new Error(`Staging upload rate limit exceeded. Retry after ${retryAfter} seconds.`), { code: 'RATE_LIMITED' }));
+            return { content: [{ type: 'text', text: JSON.stringify(mapped, null, 2) }], isError: true };
+        }
         try {
             const result = await executeStagingUpload(input.file, input.filename, input.content_type, ctx.account.id);
             return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
@@ -392,10 +367,7 @@ function createMcpServer() {
     });
     // ── get_account ────────────────────────────────────────────────────────────
     server.tool('get_account', 'Get account details including Light ID, wallet address, and configuration.', {}, async (input) => {
-        const req = _currentRequest;
-        if (!req)
-            throw new Error('No request context available');
-        const ctx = getRequestContext(req);
+        const ctx = reqContext.getStore();
         if (!ctx)
             throw new Error('Not authenticated');
         try {
@@ -1338,10 +1310,6 @@ app.post('/api/mint', (req, res, next) => {
         }
     }
 });
-// TODO [MEDIUM]: Replace the _currentRequest global with AsyncLocalStorage so
-//   concurrent requests can never bleed context into each other. The WeakMap
-//   context store already scopes data correctly per-request, but the global
-//   _currentRequest variable is not concurrency-safe under high load.
 // ── MCP endpoint ───────────────────────────────────────────────────────────
 app.post('/mcp', async (req, res, next) => {
     const body = req.body;
@@ -1427,23 +1395,22 @@ app.post('/mcp', async (req, res, next) => {
             return;
         }
     }
-    // 4. Store context and expose current request to tool handlers
-    setRequestContext(req, accountContext);
-    _currentRequest = req;
-    // 5. Create a fresh MCP server + transport per request (stateless HTTP)
+    // 4. Run the MCP request inside AsyncLocalStorage so every tool handler
+    //    in this request picks up the correct AccountContext, even under
+    //    concurrent requests. No global mutable state needed.
     const mcpServer = createMcpServer();
     const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined, // stateless — no session IDs
     });
     res.on('close', () => {
-        if (_currentRequest === req)
-            _currentRequest = null;
         transport.close().catch(() => undefined);
         mcpServer.close().catch(() => undefined);
     });
     try {
-        await mcpServer.connect(transport);
-        await transport.handleRequest(req, res, req.body);
+        await reqContext.run(accountContext, async () => {
+            await mcpServer.connect(transport);
+            await transport.handleRequest(req, res, req.body);
+        });
     }
     catch (err) {
         next(err);

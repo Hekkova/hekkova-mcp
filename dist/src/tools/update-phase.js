@@ -47,6 +47,14 @@ export async function handleUpdatePhase(rawInput, accountContext) {
     if (moment.deleted_at) {
         throw Object.assign(new Error(`Cannot phase-shift a deleted moment (block_id: ${block_id}). The on-chain NFT remains but this moment's off-chain record has been deleted.`), { code: 'MOMENT_DELETED' });
     }
+    // Eclipse sealed check — content must stay locked until the reveal date
+    if (moment.category === 'eclipse' && moment.eclipse_reveal_date) {
+        const revealDate = new Date(moment.eclipse_reveal_date);
+        if (new Date() < revealDate) {
+            throw Object.assign(new Error(`This eclipse moment is sealed until ${moment.eclipse_reveal_date}. ` +
+                `Phase shifts are locked until the reveal date.`), { code: 'ECLIPSE_SEALED' });
+        }
+    }
     const previousPhase = moment.phase;
     const targetPhase = new_phase;
     // No-op: same phase

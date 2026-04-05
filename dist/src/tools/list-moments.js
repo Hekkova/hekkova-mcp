@@ -10,7 +10,7 @@ export const ListMomentsInputSchema = z.object({
     category: z
         .enum(['super_moon', 'blue_moon', 'super_blue_moon', 'eclipse'])
         .optional(),
-    search: z.string().optional(),
+    search: z.string().max(200).optional(),
     sort: z.enum(['newest', 'oldest']).default('newest'),
     sealed: z.boolean().optional(),
 });

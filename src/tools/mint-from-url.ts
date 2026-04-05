@@ -93,7 +93,7 @@ export const MintFromUrlInputSchema = z.object({
     .nullable()
     .default(null),
   eclipse_reveal_date: z.string().optional(),
-  tags: z.array(z.string()).max(20).optional(),
+  tags: z.array(z.string().max(100)).max(20).optional(),
   source: SourceMetadataSchema.optional(),
 });
 
@@ -135,7 +135,7 @@ function resolveMediaType(contentType: string): MediaType | null {
   return CONTENT_TYPE_MAP[base] ?? null;
 }
 
-function isDirectMediaUrl(url: string, contentType: string): boolean {
+function isDirectMediaUrl(_url: string, contentType: string): boolean {
   const base = contentType.split(';')[0].trim().toLowerCase();
   return base.startsWith('image/') || base.startsWith('video/') || base.startsWith('audio/');
 }
@@ -176,24 +176,52 @@ interface FetchedContent {
   platform: string;
 }
 
+/**
+ * Fetch a URL, following redirects manually so that every hop is SSRF-checked.
+ * Using fetch(url, { redirect: 'follow' }) would silently follow redirects to
+ * private addresses after the initial assertPublicUrl check passed.
+ */
+async function fetchWithSsrfGuard(targetUrl: string, userAgent: string, maxHops = 5): Promise<Response> {
+  let current = targetUrl;
+  for (let hop = 0; hop < maxHops; hop++) {
+    const res = await fetch(current, {
+      headers: { 'User-Agent': userAgent },
+      redirect: 'manual', // never auto-follow; we inspect each Location header
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get('location');
+      if (!location) {
+        const err = new Error('Redirect with no Location header') as Error & { code: string };
+        err.code = 'URL_FETCH_FAILED';
+        throw err;
+      }
+      const next = new URL(location, current).toString();
+      await assertPublicUrl(next); // SSRF-check the redirect target before following
+      current = next;
+      continue;
+    }
+    return res;
+  }
+  const err = new Error('Too many redirects') as Error & { code: string };
+  err.code = 'URL_FETCH_FAILED';
+  throw err;
+}
+
 async function fetchAndExtract(url: string, titleOverride?: string): Promise<FetchedContent> {
   const userAgent =
     'Mozilla/5.0 (compatible; Hekkova-MCP/1.0; +https://hekkova.com)';
 
-  // SSRF guard — must run before any network I/O
+  // SSRF guard — check the initial URL before any network I/O
   await assertPublicUrl(url);
 
   let response: Response;
   try {
-    response = await fetch(url, {
-      headers: { 'User-Agent': userAgent },
-      redirect: 'follow',
-    });
+    response = await fetchWithSsrfGuard(url, userAgent);
   } catch (err) {
     const fetchErr = new Error(
       `Failed to fetch URL: ${url} — ${(err as Error).message}`
     ) as Error & { code: string };
-    fetchErr.code = 'URL_FETCH_FAILED';
+    fetchErr.code = (err as Error & { code?: string }).code ?? 'URL_FETCH_FAILED';
     throw fetchErr;
   }
 
@@ -247,9 +275,7 @@ async function fetchAndExtract(url: string, titleOverride?: string): Promise<Fet
   let imageResponse: Response;
   try {
     await assertPublicUrl(ogImage);
-    imageResponse = await fetch(ogImage, {
-      headers: { 'User-Agent': userAgent },
-    });
+    imageResponse = await fetchWithSsrfGuard(ogImage, userAgent);
   } catch {
     // If image fetch fails, fall back to text
     const textContent = `Title: ${ogTitle}\nURL: ${url}\nArchived: ${new Date().toISOString()}`;

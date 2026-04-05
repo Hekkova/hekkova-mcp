@@ -73,7 +73,7 @@ Get your API key at [hekkova.com/dashboard/keys](https://hekkova.com/dashboard/k
 | `mint_from_url` | Fetch a public URL (tweet, Instagram post, image, web page) and mint it. Extracts og:title and og:image automatically. |
 | `list_moments` | Paginated list of all minted moments. Filterable by phase, category, or search query. |
 | `get_moment` | Full details for a single moment by Block ID: CIDs, transaction hash, phase, tags, and more. |
-| `update_phase` | Change a moment's privacy phase. Free between encrypted tiers (New Moon → Crescent → Gibbous). $0.49 to/from Full Moon. Free for Legacy Plan. |
+| `update_phase` | Change a moment's privacy phase. Costs 1 credit (text/image) or 2 credits (video). Legacy Plan includes 10 free Phase Shifts/month. |
 | `export_moments` | Export all moments as JSON or CSV. Returns a 24-hour download URL with all Block IDs and IPFS CIDs. |
 | `get_balance` | Check remaining mint credits, current plan (free / arc_builder / legacy), and phase shift balance. |
 | `get_account` | Account identity: Light ID, display name, wallet address, default phase, and legacy plan status. |

@@ -33,7 +33,7 @@ export declare function listMoments(accountId: string, opts: {
     moments: Moment[];
     total: number;
 }>;
-export declare function insertMoment(moment: Omit<Moment, 'id' | 'created_at'>): Promise<Moment>;
+export declare function insertMoment(moment: Omit<Moment, 'id' | 'created_at' | 'deleted_at'>): Promise<Moment>;
 export declare function updateMomentPhase(blockId: string, accountId: string, newPhase: Phase): Promise<Moment>;
 /**
  * Update a moment's phase, CIDs, and encryption fields after rebuilding its HTML.

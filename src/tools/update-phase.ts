@@ -86,6 +86,14 @@ export async function handleUpdatePhase(
     );
   }
 
+  // Soft-delete check
+  if (moment.deleted_at) {
+    throw Object.assign(
+      new Error(`Cannot phase-shift a deleted moment (block_id: ${block_id}). The on-chain NFT remains but this moment's off-chain record has been deleted.`),
+      { code: 'MOMENT_DELETED' }
+    );
+  }
+
   const previousPhase = moment.phase as Phase;
   const targetPhase = new_phase as Phase;
 

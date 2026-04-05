@@ -65,6 +65,17 @@ export async function handleGetMoment(
     throw err;
   }
 
+  // ── Soft-delete check ─────────────────────────────────────────────────────
+  if (moment.deleted_at) {
+    return {
+      block_id: moment.block_id,
+      token_id: moment.token_id,
+      deleted: true,
+      deleted_at: moment.deleted_at,
+      message: 'This moment has been deleted. The on-chain NFT (token ' + moment.token_id + ') remains on Polygon as a permanent record.',
+    };
+  }
+
   // ── Eclipse sealed check ──────────────────────────────────────────────────
   // TODO: Replace with Lit Protocol time-based ACC for on-chain enforcement
   if (moment.category === 'eclipse' && moment.eclipse_reveal_date) {

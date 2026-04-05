@@ -101,7 +101,8 @@ export async function listMoments(accountId, opts) {
     let query = supabase
         .from('moments')
         .select('*', { count: 'exact' })
-        .eq('account_id', accountId);
+        .eq('account_id', accountId)
+        .is('deleted_at', null);
     if (opts.phase)
         query = query.eq('phase', opts.phase);
     if (opts.category)
@@ -218,6 +219,7 @@ export async function getAllMoments(accountId) {
         .from('moments')
         .select('*')
         .eq('account_id', accountId)
+        .is('deleted_at', null)
         .order('timestamp', { ascending: false });
     if (error)
         throw new Error(`Failed to get all moments: ${error.message}`);

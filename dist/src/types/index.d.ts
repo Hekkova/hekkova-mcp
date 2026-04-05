@@ -72,6 +72,7 @@ export interface Moment {
     tags: string[];
     timestamp: string;
     created_at: string;
+    deleted_at: string | null;
 }
 /**
  * API key record (maps to the `api_keys` table in Supabase).

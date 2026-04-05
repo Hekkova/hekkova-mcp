@@ -89,6 +89,7 @@ export interface Moment {
   tags: string[];
   timestamp: string;
   created_at: string;
+  deleted_at: string | null;
 }
 
 /**

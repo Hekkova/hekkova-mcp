@@ -43,6 +43,10 @@ export async function handleUpdatePhase(rawInput, accountContext) {
     if (!moment) {
         throw Object.assign(new Error(`No moment found with block_id: ${block_id}`), { code: 'INVALID_BLOCK_ID' });
     }
+    // Soft-delete check
+    if (moment.deleted_at) {
+        throw Object.assign(new Error(`Cannot phase-shift a deleted moment (block_id: ${block_id}). The on-chain NFT remains but this moment's off-chain record has been deleted.`), { code: 'MOMENT_DELETED' });
+    }
     const previousPhase = moment.phase;
     const targetPhase = new_phase;
     // No-op: same phase

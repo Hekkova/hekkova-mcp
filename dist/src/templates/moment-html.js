@@ -21,8 +21,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova brand mark — inline SVG (works on any background, no image asset needed)
 // ─────────────────────────────────────────────────────────────────────────────
-const LOGO_SVG_LARGE = `<svg width="40" height="40" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="40" cy="40" r="37" fill="#E8A020"/><circle cx="52" cy="40" r="33" fill="#0d0d14"/></svg>`;
-const LOGO_SVG_CARD = `<svg width="52" height="52" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="40" cy="40" r="37" fill="#E8A020"/><circle cx="52" cy="40" r="33" fill="#0d0d14"/></svg>`;
+// Crescent moon icon — matches crescent.png: amber circle (#D4A12A) with a dark
+// navy circle (#1B1F3B) offset right, leaving a gold crescent on the left.
+const LOGO_SVG_CARD = `<svg width="52" height="52" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="40" cy="40" r="37" fill="#D4A12A"/><circle cx="53" cy="40" r="31" fill="#1B1F3B"/></svg>`;
 // ─────────────────────────────────────────────────────────────────────────────
 // Display helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -158,9 +159,6 @@ a:hover{text-decoration:underline}
 .wrap{max-width:680px;margin:0 auto}
 /* ── Wordmark / logo ── */
 .wordmark{
-  display:flex;
-  align-items:center;
-  gap:.55rem;
   margin-bottom:2.5rem;
 }
 .logo-text{
@@ -263,7 +261,7 @@ input:focus{border-color:#E8A02044}
   .meta{padding:1rem}
 }`;
     // ── Wordmark HTML (always visible) ────────────────────────────────────────
-    const wordmarkHTML = `<div class="wordmark">${LOGO_SVG_LARGE}<span class="logo-text">Hekkova</span></div>`;
+    const wordmarkHTML = `<div class="wordmark"><span class="logo-text">Hekkova</span></div>`;
     // ── Metadata bar HTML (always visible) ────────────────────────────────────
     const metaBar = `<div class="meta">
   ${catLabel ? `<span class="badge badge-cat">${catLabel}</span>` : ''}

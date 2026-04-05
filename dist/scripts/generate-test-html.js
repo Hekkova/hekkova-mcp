@@ -26,7 +26,6 @@ const TEST_PASSPHRASE = 'TestPassphrase123';
 const PBKDF2_ITERATIONS = 600_000;
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
-const TAG_BYTES = 16;
 // ─────────────────────────────────────────────────────────────────────────────
 // Crypto helpers (mirrors src/lib/crypto.ts)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,31 +49,23 @@ function aesGcmEncryptStr(plaintext, key) {
     ]);
     return { ciphertext: b64(ct), iv: b64(iv) };
 }
-function aesGcmEncryptBytes(plaintext, key) {
-    const iv = crypto.randomBytes(IV_BYTES);
-    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-    const ct = Buffer.concat([
-        cipher.update(plaintext),
-        cipher.final(),
-        cipher.getAuthTag(),
-    ]);
-    return { ciphertext: b64(ct), iv: b64(iv) };
-}
 // ─────────────────────────────────────────────────────────────────────────────
 // Generate encrypted test moment
 // ─────────────────────────────────────────────────────────────────────────────
 async function generateEncryptedMoment() {
     console.log('[test] Generating encrypted moment...');
-    // 1. Generate raw entropy (32 random bytes) — simulates what the dashboard does
-    const entropy = crypto.randomBytes(32);
+    // 1. Generate raw entropy (16 random bytes) — matches real dashboard setupEncryption
+    const entropy = crypto.randomBytes(16);
+    // Hex-encode to get the string the dashboard actually stores and PBKDF2-feeds
+    const entropyHex = hex(entropy); // 32-char hex string
     // 2. Derive passphrase wrapping key (same params as dashboard)
     const passphraseSalt = crypto.randomBytes(16);
     const wrappingKey = await pbkdf2Key(TEST_PASSPHRASE, passphraseSalt);
-    // 3. Encrypt entropy with wrapping key (as raw bytes — what the dashboard stores)
-    const encryptedEntropyResult = aesGcmEncryptBytes(entropy, wrappingKey);
-    // 4. Derive master key from entropy + seedSalt
+    // 3. Encrypt the hex string (not raw bytes) — matches dashboard encrypted_entropy
+    const encryptedEntropyResult = aesGcmEncryptStr(entropyHex, wrappingKey);
+    // 4. Derive master key from entropyHex + seedSalt — matches getMasterKey() and viewer
     const seedSalt = crypto.randomBytes(16);
-    const masterKey = await pbkdf2Key(entropy, seedSalt);
+    const masterKey = await pbkdf2Key(entropyHex, seedSalt);
     // 5. Compute verification hash
     const verificationHash = hex(crypto.createHash('sha256').update(masterKey).digest());
     // 6. Encrypt the moment content with the master key
@@ -141,12 +132,13 @@ async function generateImageMoment() {
     console.log('[test] Generating encrypted image moment...');
     // Tiny 1x1 red pixel PNG (base64) for testing image rendering
     const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwADhQGAWjR9awAAAABJRU5ErkJggg==';
-    const entropy = crypto.randomBytes(32);
+    const entropy = crypto.randomBytes(16);
+    const entropyHex = hex(entropy);
     const passphraseSalt = crypto.randomBytes(16);
     const wrappingKey = await pbkdf2Key(TEST_PASSPHRASE, passphraseSalt);
-    const encryptedEntropyResult = aesGcmEncryptBytes(entropy, wrappingKey);
+    const encryptedEntropyResult = aesGcmEncryptStr(entropyHex, wrappingKey);
     const seedSalt = crypto.randomBytes(16);
-    const masterKey = await pbkdf2Key(entropy, seedSalt);
+    const masterKey = await pbkdf2Key(entropyHex, seedSalt);
     const verificationHash = hex(crypto.createHash('sha256').update(masterKey).digest());
     const contentResult = aesGcmEncryptStr(tinyPng, masterKey);
     // Simulate correct Node.js auth-tag format: the auth tag (last 16 bytes) must be

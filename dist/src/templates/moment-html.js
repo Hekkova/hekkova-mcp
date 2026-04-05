@@ -9,7 +9,20 @@
 // Crypto parameters MUST stay in sync with src/lib/crypto.ts:
 //   PBKDF2: 600,000 iterations, SHA-256, 16-byte salt → 256-bit key
 //   AES-GCM: 12-byte IV, 128-bit auth tag appended to ciphertext
+//
+// Key derivation in the viewer (must match server getMasterKey and dashboard):
+//   1. passphrase + passphraseSalt → PBKDF2 → wrapping key
+//   2. decrypt encryptedEntropy with wrapping key → UTF-8 bytes of entropyHex
+//   3. decode to hex string → re-encode with TextEncoder → PBKDF2 with seedSalt
+//      ↑ This step is CRITICAL: the PBKDF2 password must be the UTF-8 bytes of
+//        the hex string, not the raw entropy bytes. getMasterKey() does the same
+//        via bytesToHex(entropyBytes) before calling deriveKey().
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Hekkova brand mark — inline SVG (works on any background, no image asset needed)
+// ─────────────────────────────────────────────────────────────────────────────
+const LOGO_SVG_LARGE = `<svg width="40" height="40" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="40" cy="40" r="37" fill="#E8A020"/><circle cx="52" cy="40" r="33" fill="#0d0d14"/></svg>`;
+const LOGO_SVG_CARD = `<svg width="52" height="52" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="40" cy="40" r="37" fill="#E8A020"/><circle cx="52" cy="40" r="33" fill="#0d0d14"/></svg>`;
 // ─────────────────────────────────────────────────────────────────────────────
 // Display helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,12 +57,12 @@ function categoryLabel(category) {
 }
 function categoryColor(category) {
     const map = {
-        super_moon: '#c9a84c',
-        blue_moon: '#4a80c9',
-        super_blue_moon: 'linear-gradient(135deg,#c9a84c,#4a80c9)',
-        eclipse: '#6b3fa0',
+        super_moon: '#E8A020',
+        blue_moon: '#4A6FA5',
+        super_blue_moon: '#C8960C',
+        eclipse: '#B22222',
     };
-    return (category && map[category]) ? map[category] : '#444';
+    return (category && map[category]) ? map[category] : '#555';
 }
 function formatDate(iso) {
     try {
@@ -129,31 +142,38 @@ export function buildMomentHTML(opts) {
     const ipfsUrl = ipfsCid ? `https://ipfs.io/ipfs/${ipfsCid}` : '';
     // ── Shared styles ─────────────────────────────────────────────────────────
     const css = `
+@import url('https://fonts.googleapis.com/css2?family=Righteous&family=Outfit:wght@400;500;600;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
 html{height:100%}
 body{
-  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  font-family:'Outfit',system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
   background:#0a0a0f;
-  color:#e8e2d9;
+  color:#fdf6e3;
   min-height:100%;
   padding:2rem 1rem 4rem;
   line-height:1.6;
 }
-a{color:#c9a84c;text-decoration:none}
+a{color:#E8A020;text-decoration:none}
 a:hover{text-decoration:underline}
 .wrap{max-width:680px;margin:0 auto}
+/* ── Wordmark / logo ── */
 .wordmark{
-  font-size:1.1rem;
-  font-weight:700;
-  letter-spacing:.12em;
-  text-transform:uppercase;
-  color:#c9a84c;
+  display:flex;
+  align-items:center;
+  gap:.55rem;
   margin-bottom:2.5rem;
-  display:block;
+}
+.logo-text{
+  font-family:'Righteous',cursive;
+  font-size:1.15rem;
+  font-weight:400;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color:#E8A020;
 }
 /* ── Metadata bar ── */
 .meta{
-  border:1px solid #1e1e2a;
+  border:1px solid #1a1d2e;
   border-radius:12px;
   padding:1.25rem 1.5rem;
   background:#0f0f18;
@@ -172,22 +192,22 @@ a:hover{text-decoration:underline}
   letter-spacing:.06em;
   text-transform:uppercase;
 }
-.badge-cat{background:${catColor.startsWith('linear') ? '#222' : catColor + '22'};color:${catColor.startsWith('linear') ? '#c9a84c' : catColor};border:1px solid ${catColor.startsWith('linear') ? '#c9a84c44' : catColor + '44'}}
-.badge-phase{background:#1a1a2a;color:#a09080;border:1px solid #2a2a3a;font-size:.7rem}
-.meta-date{font-size:.8rem;color:#6a6070;margin-left:auto}
-.meta-links{width:100%;display:flex;flex-wrap:wrap;gap:1rem;font-size:.8rem;color:#6a6070;margin-top:.25rem}
+.badge-cat{background:${catColor}22;color:${catColor};border:1px solid ${catColor}44}
+.badge-phase{background:#1a1a2a;color:#9090a0;border:1px solid #2a2a3a;font-size:.7rem}
+.meta-date{font-size:.8rem;color:#6b6580;margin-left:auto}
+.meta-links{width:100%;display:flex;flex-wrap:wrap;gap:1rem;font-size:.8rem;color:#6b6580;margin-top:.25rem}
 .meta-links a{color:#7a6a9a}
 /* ── Passphrase card ── */
 .card{
   background:#0f0f18;
-  border:1px solid #1e1e2a;
+  border:1px solid #1a1d2e;
   border-radius:16px;
   padding:2.5rem 2rem;
   margin-bottom:1.5rem;
   text-align:center;
 }
-.card-icon{font-size:2.5rem;margin-bottom:1rem;opacity:.7}
-.card h2{font-size:1.25rem;font-weight:600;margin-bottom:.5rem;color:#e8e2d9}
+.card-icon{margin-bottom:1rem;opacity:.85}
+.card h2{font-size:1.25rem;font-weight:600;margin-bottom:.5rem;color:#fdf6e3}
 .card p{font-size:.9rem;color:#8a8090;margin-bottom:1.5rem}
 .input-wrap{position:relative;margin-bottom:1rem}
 input[type=password],input[type=text]{
@@ -196,43 +216,45 @@ input[type=password],input[type=text]{
   background:#1a1a24;
   border:1px solid #2a2a3a;
   border-radius:10px;
-  color:#e8e2d9;
+  color:#fdf6e3;
   font-size:1rem;
+  font-family:inherit;
   outline:none;
   transition:border-color .2s;
 }
-input:focus{border-color:#c9a84c44}
+input:focus{border-color:#E8A02044}
 .toggle-vis{
   position:absolute;right:.75rem;top:50%;transform:translateY(-50%);
   background:none;border:none;cursor:pointer;
-  color:#6a6070;font-size:.85rem;padding:.25rem;
+  color:#6b6580;font-size:.85rem;padding:.25rem;
 }
 .btn{
   width:100%;
   padding:.8rem;
-  background:#c9a84c;
+  background:#E8A020;
   color:#0a0a0f;
   border:none;
   border-radius:10px;
   font-size:1rem;
   font-weight:700;
+  font-family:inherit;
   cursor:pointer;
   letter-spacing:.04em;
   transition:opacity .2s;
 }
 .btn:hover{opacity:.88}
 .btn:disabled{opacity:.4;cursor:not-allowed}
-.error{color:#e05555;font-size:.85rem;margin-top:.75rem;min-height:1.2em}
+.error{color:#E84040;font-size:.85rem;margin-top:.75rem;min-height:1.2em}
 /* ── Moment view ── */
 .moment{
   background:#0f0f18;
-  border:1px solid #1e1e2a;
+  border:1px solid #1a1d2e;
   border-radius:16px;
   padding:2rem;
   margin-bottom:1.5rem;
 }
-.moment h1{font-size:1.5rem;font-weight:700;margin-bottom:1.25rem;color:#f0ece4}
-.moment-content{font-size:1rem;color:#c8c0b8}
+.moment h1{font-size:1.5rem;font-weight:700;margin-bottom:1.25rem;color:#fdf6e3}
+.moment-content{font-size:1rem;color:#c8b8d0}
 /* ── Footer ── */
 .footer{font-size:.78rem;color:#3a3545;text-align:center;margin-top:2rem}
 @media(max-width:480px){
@@ -240,13 +262,15 @@ input:focus{border-color:#c9a84c44}
   .moment{padding:1.5rem}
   .meta{padding:1rem}
 }`;
+    // ── Wordmark HTML (always visible) ────────────────────────────────────────
+    const wordmarkHTML = `<div class="wordmark">${LOGO_SVG_LARGE}<span class="logo-text">Hekkova</span></div>`;
     // ── Metadata bar HTML (always visible) ────────────────────────────────────
     const metaBar = `<div class="meta">
   ${catLabel ? `<span class="badge badge-cat">${catLabel}</span>` : ''}
   <span class="badge badge-phase">${phLabel} &middot; ${phDesc}</span>
   <span class="meta-date">${dateStr}</span>
   <div class="meta-links">
-    <span>Block ID: <span style="color:#c9a84c;font-family:monospace;font-size:.75rem">${blockId}</span></span>
+    <span>Block ID: <span style="color:#E8A020;font-family:monospace;font-size:.75rem">${blockId}</span></span>
     ${ipfsUrl ? `<a href="${ipfsUrl}" target="_blank" rel="noopener">IPFS</a>` : ''}
     ${lighthouseCid ? `<a href="https://gateway.lighthouse.storage/ipfs/${lighthouseCid}" target="_blank" rel="noopener">Filecoin</a>` : ''}
     <a href="${polygonscanUrl}" target="_blank" rel="noopener">Polygonscan</a>
@@ -264,7 +288,7 @@ input:focus{border-color:#c9a84c44}
 </head>
 <body>
 <div class="wrap">
-  <span class="wordmark">Hekkova</span>
+  ${wordmarkHTML}
   ${metaBar}
   <div class="moment">
     <h1>${title.replace(/</g, '&lt;')}</h1>
@@ -334,10 +358,12 @@ async function unlock(){
     var wk=await subtle.importKey('raw',wkBits,{name:'AES-GCM'},false,['decrypt']);
     console.log('[Hekkova] wrapping key derived');
 
-    // 3. Decrypt entropy (raw 32 bytes) using wrapping key
-    var entropyBytes;
+    // 3. Decrypt encryptedEntropy → UTF-8 bytes of entropyHex
+    //    encrypted_entropy stores: AES-GCM( TextEncoder(entropyHex), wrappingKey )
+    //    i.e. the encrypted form of the hex string "aabb1234..."
+    var entropyRaw;
     try{
-      entropyBytes=await subtle.decrypt(
+      entropyRaw=await subtle.decrypt(
         {name:'AES-GCM',iv:b64ToBytes(ENC.entropyIV)},
         wk,b64ToBytes(ENC.encryptedEntropy)
       );
@@ -347,9 +373,13 @@ async function unlock(){
       return showError('Incorrect passphrase. Please try again.');
     }
 
-    // 4. Derive master key from entropy + seedSalt
+    // 4. Decode to the hex string, then re-encode for PBKDF2.
+    //    CRITICAL: the PBKDF2 password MUST be UTF-8(entropyHex), not raw bytes.
+    //    This matches getMasterKey() on the server: deriveKey(bytesToHex(rawEntropy), seedSalt)
+    //    and the dashboard: deriveKey(entropyHex, seedSalt).
+    var entropyHex=new TextDecoder().decode(entropyRaw);
     var entropyKey=await subtle.importKey(
-      'raw',entropyBytes,{name:'PBKDF2'},false,['deriveBits']
+      'raw',new TextEncoder().encode(entropyHex),{name:'PBKDF2'},false,['deriveBits']
     );
     var mkBits=await subtle.deriveBits(
       {name:'PBKDF2',salt:b64ToBytes(ENC.seedSalt),iterations:600000,hash:'SHA-256'},
@@ -357,7 +387,7 @@ async function unlock(){
     );
     console.log('[Hekkova] master key derived');
 
-    // 5. Verify master key
+    // 5. Verify master key matches the stored hash
     var mkHash=hexStr(await subtle.digest('SHA-256',mkBits));
     console.log('[Hekkova] verification hash computed:', mkHash, '| expected:', ENC.verificationHash);
     if(mkHash!==ENC.verificationHash){
@@ -435,12 +465,12 @@ document.getElementById('pp').addEventListener('keydown',function(e){
 </head>
 <body>
 <div class="wrap">
-  <span class="wordmark">Hekkova</span>
+  ${wordmarkHTML}
 
   <!-- Lock view: passphrase prompt -->
   <div id="lock-view">
     <div class="card">
-      <div class="card-icon">&#x1F319;</div>
+      <div class="card-icon">${LOGO_SVG_CARD}</div>
       <h2>This moment is private</h2>
       <p>Enter your passphrase to view this memory</p>
       <div class="input-wrap">

@@ -279,40 +279,45 @@ export async function executeMint(
   let contentIv: string | null = null;
 
   const rawContent = input.media; // base64 for media, text string for text/plain
+  const safeTitle = input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
+
+  // htmlFields is needed both for the initial pin and the post-mint re-pin
+  let htmlFields: Awaited<ReturnType<typeof getOwnerHtmlEncryptionFields>> | null = null;
 
   if (needsEncryption) {
     // Encrypt content with the owner's master key
-    const [encrypted, htmlFields] = await Promise.all([
+    const [encrypted, fields] = await Promise.all([
       encryptContent(rawContent, account.id),
       getOwnerHtmlEncryptionFields(account.id),
     ]);
 
     contentCiphertext = encrypted.ciphertext;
     contentIv = encrypted.iv;
+    htmlFields = fields;
 
-    // Build HTML with encrypted payload embedded
+    // Build HTML with encrypted payload embedded.
+    // blockId/tokenId are placeholders here — we re-pin with real values after minting.
     const html = buildMomentHTML({
       title: input.title,
-      content: '',                // not used for encrypted moments
+      content: '',
       mediaType: input.media_type,
       category: input.category,
       phase,
       createdAt: timestamp,
-      blockId: 'pending',         // placeholder — updated after minting
+      blockId: 'pending',
       tokenId: '0',
       contractAddress: config.hekkovaContractAddress,
       encryption: {
         ciphertext: encrypted.ciphertext,
         iv: encrypted.iv,
-        encryptedEntropy: htmlFields.encryptedEntropy,
-        entropyIV: htmlFields.entropyIV,
-        passphraseSalt: htmlFields.passphraseSalt,
-        seedSalt: htmlFields.seedSalt,
-        verificationHash: htmlFields.verificationHash,
+        encryptedEntropy: fields.encryptedEntropy,
+        entropyIV: fields.entropyIV,
+        passphraseSalt: fields.passphraseSalt,
+        seedSalt: fields.seedSalt,
+        verificationHash: fields.verificationHash,
       },
     });
 
-    const safeTitle = input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
     htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
     lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   } else {
@@ -338,7 +343,6 @@ export async function executeMint(
       contractAddress: config.hekkovaContractAddress,
     });
 
-    const safeTitle = input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
     htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
     lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   }
@@ -397,6 +401,51 @@ export async function executeMint(
     accountId: account.id,
     walletAddress: account.wallet_address ?? '',
   });
+
+  // 10b. Re-pin the HTML viewer with the real Block ID and token ID.
+  //      The initial pin above used 'pending'/'0' because the NFT wasn't minted yet.
+  //      The re-pinned CID becomes media_cid in the DB — what users actually open.
+  //      The NFT's tokenURI/metadata still reference the original CID; that's fine.
+  try {
+    const finalHtml = needsEncryption && htmlFields
+      ? buildMomentHTML({
+          title: input.title,
+          content: '',
+          mediaType: input.media_type,
+          category: input.category,
+          phase,
+          createdAt: timestamp,
+          blockId,
+          tokenId: String(tokenId),
+          contractAddress: config.hekkovaContractAddress,
+          encryption: {
+            ciphertext: contentCiphertext!,
+            iv: contentIv!,
+            encryptedEntropy: htmlFields.encryptedEntropy,
+            entropyIV: htmlFields.entropyIV,
+            passphraseSalt: htmlFields.passphraseSalt,
+            seedSalt: htmlFields.seedSalt,
+            verificationHash: htmlFields.verificationHash,
+          },
+        })
+      : buildMomentHTML({
+          title: input.title,
+          content: rawContent,
+          mediaType: input.media_type,
+          category: input.category,
+          phase,
+          createdAt: timestamp,
+          blockId,
+          tokenId: String(tokenId),
+          contractAddress: config.hekkovaContractAddress,
+        });
+
+    htmlCid = await pinHtmlFile(finalHtml, `${safeTitle}.html`);
+  } catch (err) {
+    // Non-fatal: the moment is already minted. Log and continue with the
+    // original 'pending' CID — the block_id in the DB will still be correct.
+    console.warn(`[mint] Re-pin with real blockId failed for ${blockId}:`, (err as Error).message);
+  }
 
   // 11. Update account counters (deduct creditCost credits)
   await decrementMintsBy(account.id, creditCost);

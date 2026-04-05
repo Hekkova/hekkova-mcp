@@ -21,9 +21,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Hekkova brand mark — inline SVG (works on any background, no image asset needed)
 // ─────────────────────────────────────────────────────────────────────────────
-// Crescent moon icon — matches crescent.png: amber circle (#D4A12A) with a dark
-// navy circle (#1B1F3B) offset right, leaving a gold crescent on the left.
-const LOGO_SVG_CARD = `<svg width="52" height="52" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="40" cy="40" r="37" fill="#D4A12A"/><circle cx="53" cy="40" r="31" fill="#1B1F3B"/></svg>`;
+// Crescent moon icon — official Hekkova branding, embedded as base64 PNG.
+const CRESCENT_IMG = `<img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAYAAAA9zQYyAAAFPklEQVR4nO3avdVTVxCF4Y1jIi+HFOASXAOluAgCF0EproESKMAhi8g5Tqzl+2lJ8v0558zMnvdJSXTFy14jIQkAAAAAAAAAAAAAMMmXz+9/RL+GDt5Fv4CqRgX68dOHp3/2/dtX/n4O4g3bYda6vor5GSJ/jTfngdnnwZmQnyHwt3gz/rXqxh0Z8z3ibh706g9qM2O+1zXudg8d8W3DypAf6RR3mweN+tosOuatDmHbP2Dk97+ZYt5yDtv2waL/IyNrzFuOYds9UHTIUo2Yt5zCtnmQDCFL9WLecgi7/ANkCVmqHfNW5bB/in4BVxDzHD//8mua9/Wokv8SM4UsecV8r9pal1toYl6r2lqX+deXLWTJP+Z7Fda6xEITcw4V1jp90MScS/aoUwdNzDlljjpt0Bljxn+yRp3uyM8cMuv8WKYPi6kWmphryrTWaYIm5tqyRJ0i6MwxY78MUYcHnT1m1vmY6KhDgyZmT5FRhy90VsRcU1jQ2dcZ10StdEjQ2WNmnceIiHp50Nljxliro14adIWYWefxVka9LGhi7m1V1HzLAStLgmadIa1Z6elBV4gZ68yOmpNDrLOTqUGzznhk5kpPC7pKzKxzjFlRc3LAypSgWWfsMWOlWWhYGR4064wjRq80Cw0rQ4Ouss7IZeRKt1xozg1fw4JmnXHFqJVut9Css7chQbPOGGHESrdbaHi7HHSldebcyO/qSrPQsELQsHIpaM4NzHDl7GChYYWgYeV00JXODdRz9uxosdDcz320CBp9nAqacwMrnDk7WGhYsQ+a+7kX+6DRy+GguZ+x0tE7moWGFYKGFYKGFeug+Yajn0NB84EQEY58MLReaPRD0LBC0LBC0LBC0LBC0LBC0LBC0LBC0LBC0LBC0LCyO+hqv+Pgh0le9v6eY3fQv/3+97vzL2e9P//4K/olYKDv377u6o+TA1YIGlYIGlYIGlYIGlYIGlYIGlYIGlYIGlYIGlYIGlYOBV3t9xzwsPd3HJL5QvMDpX6sg0Y/BA0rBA0rh4PmgyFWOvKBUGKhYcY+aL7p6MU+aPRyKmjuaKxw9H6WWGiYaRE0d3Qfp4Pm7MBMZ84NqclCow+ChpVLQVc6O7ij6zh7bkgsNMwQNKxcDpqzAyNdOTckFhpmhgRdaaWR19V1lhouNGeHt2FBs9K4YsQ6Sw0XWmKlnQ0NmpXGGaPWWWq60PA1POgqK83ZkcPIdZZYaJiZEjQrjT1Gr7PEQsPMtKBZabwyY52lyQtdJWqsNStmiZNDEivtZHrQrDS2Zq6ztGihK0TNSs83O2aJkwNmlgXNSve2Yp2lxQtN1D2tilkKODkqRI1xVsYsBd3Q2aNmpcdYHbMU+KEwe9S4JiJmiW85nmKlawoNOvtKE/U5UessJVhoovYSGbOUIGgpf9TYJzpmKUnQUu6oWen/lyFmKVHQElFXlSVmSUrzQu59+fz+R/RreOTjpw/RLyGNTCHfpFrorcxrjZwxS4mDlnJGzemRN2YpedASUWeTOWapQNASUWeRPWYp8YfCZ7J9WOzwIbFCyDclFnor21q7L3WlmKWCC72Vaa3dlrpayDflFnor01o7LXXVmKXiC72VZa0rL3XlkG/KP8C9DGFXi9oh5BubB7kXHXaFqJ1CvrF7oHuRYWeN2jHkG9sHuxcVdqaonUO+sX/AexFhR0fdIeSbNg/6yOq4V4bdKeKtlg/9yKq4Z0bdNeKt9m/AI7PjHhk1Eb/Fm7HDrMDPhE3Ar/HmnDQq8ldREy/Siv6PHgAAAAAAAAAAAOCNfwDO0wISitNJsQAAAABJRU5ErkJggg==" width="52" height="52" alt="" aria-hidden="true" style="display:block">`;
 // ─────────────────────────────────────────────────────────────────────────────
 // Display helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -468,7 +467,7 @@ document.getElementById('pp').addEventListener('keydown',function(e){
   <!-- Lock view: passphrase prompt -->
   <div id="lock-view">
     <div class="card">
-      <div class="card-icon">${LOGO_SVG_CARD}</div>
+      <div class="card-icon">${CRESCENT_IMG}</div>
       <h2>This moment is private</h2>
       <p>Enter your passphrase to view this memory</p>
       <div class="input-wrap">

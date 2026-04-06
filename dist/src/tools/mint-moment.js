@@ -263,12 +263,21 @@ export async function executeMint(input, accountContext, overrides = {}) {
     // 8. Build minimal, privacy-safe tokenURI metadata.
     //
     // DELIBERATELY omits: title, description, category, phase, media type, tags,
-    // source metadata, eclipse date, html_cid, and all user-generated content.
+    // source metadata, eclipse date, and all user-generated content.
     // Those fields are stored in Supabase and inside the (optionally encrypted)
     // IPFS HTML payload — they are NOT exposed on the public chain.
     //
     // Note: blockId isn't known here (it comes from mintNFT() below), so
     // external_url points to the user's Arc page rather than the specific moment.
+    //
+    // Content attribute: intentionally uses the initial htmlCid (pinned above with
+    // blockId='pending'), NOT the re-pinned CID from step 10b. The metadata JSON
+    // must be pinned before mintNFT() runs, and mintNFT() is required to know the
+    // blockId needed for the re-pin — so including the final CID here would require
+    // a circular dependency. The initial CID is a valid permanent IPFS pin containing
+    // all encrypted content; the only difference is the viewer shows "pending" for the
+    // block number. For content recovery (the purpose of this attribute), the initial
+    // CID is fully sufficient. The final CID (with real block ID) is stored in Supabase.
     const metadata = {
         name: 'Hekkova Moment',
         description: 'A moment on Hekkova. Visit app.hekkova.com to view.',
@@ -277,6 +286,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
         attributes: [
             { trait_type: 'Encrypted', value: needsEncryption },
             { trait_type: 'Timestamp', value: timestamp },
+            { trait_type: 'Content', value: `ipfs://${htmlCid}` },
         ],
     };
     // 9. Pin metadata to IPFS

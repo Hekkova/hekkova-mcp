@@ -272,7 +272,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
     const metadata = {
         name: 'Hekkova Moment',
         description: 'A moment on Hekkova. Visit app.hekkova.com to view.',
-        image: 'https://hekkova.com/assets/moment-placeholder.png',
+        image: 'https://hekkova.com/icons/moment-placeholder.png',
         external_url: 'https://app.hekkova.com/arc',
         attributes: [
             { trait_type: 'Encrypted', value: needsEncryption },

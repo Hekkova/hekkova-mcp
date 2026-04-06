@@ -259,18 +259,8 @@ export async function executeMint(
     videoCid = await pinMedia(input.media, input.media_type, `video.${ext}`);
   }
 
-  // 6. Build final source metadata (merge agent-provided + auto-generated video fields)
-  const sourceMetadata: Record<string, unknown> | null = (() => {
-    const base = input.source ? { ...input.source } : null;
-    if (videoCid) {
-      return {
-        ...(base ?? {}),
-        source_capture_video_cid: videoCid,
-        source_capture_video_size_bytes: videoSizeBytes,
-      };
-    }
-    return base;
-  })();
+  // 6. (source metadata intentionally not merged here — video CID/size are
+  //    stored directly via videoCid/videoSizeBytes in the moment record below)
 
   // 7. Encrypt content and build the IPFS HTML viewer
   let htmlCid: string;
@@ -347,50 +337,25 @@ export async function executeMint(
     lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   }
 
-  // 8. Build NFT metadata JSON (ERC-721 / OpenSea compatible)
-  const contentPreview =
-    needsEncryption
-      ? 'Encrypted moment'
-      : input.media_type === 'text/plain'
-        ? rawContent.slice(0, 200)
-        : `${phaseLabel(phase)} moment`;
-
+  // 8. Build minimal, privacy-safe tokenURI metadata.
+  //
+  // DELIBERATELY omits: title, description, category, phase, media type, tags,
+  // source metadata, eclipse date, html_cid, and all user-generated content.
+  // Those fields are stored in Supabase and inside the (optionally encrypted)
+  // IPFS HTML payload — they are NOT exposed on the public chain.
+  //
+  // Note: blockId isn't known here (it comes from mintNFT() below), so
+  // external_url points to the user's Arc page rather than the specific moment.
   const metadata: Record<string, unknown> = {
-    name: input.title,
-    description: input.description ?? contentPreview,
-    external_url: `https://ipfs.io/ipfs/${htmlCid}`,
-    content_type: 'text/html',
+    name: 'Hekkova Moment',
+    description: 'A moment on Hekkova. Visit app.hekkova.com to view.',
+    image: 'https://hekkova.com/assets/moment-placeholder.png',
+    external_url: 'https://app.hekkova.com/arc',
     attributes: [
-      { trait_type: 'Phase', value: phase },
-      { trait_type: 'Category', value: input.category ?? 'uncategorized' },
       { trait_type: 'Encrypted', value: needsEncryption },
-      { trait_type: 'Media Type', value: input.media_type },
       { trait_type: 'Timestamp', value: timestamp },
-      ...(input.tags ?? []).map((tag) => ({ trait_type: 'Tag', value: tag })),
-      ...(input.eclipse_reveal_date
-        ? [{ trait_type: 'Eclipse Reveal Date', value: input.eclipse_reveal_date }]
-        : []),
-      ...(overrides.source_platform
-        ? [{ trait_type: 'Source Platform', value: overrides.source_platform }]
-        : []),
     ],
-    properties: {
-      phase,
-      category: input.category,
-      encrypted: needsEncryption,
-      media_type: input.media_type,
-      html_cid: htmlCid,
-      source_url: overrides.source_url ?? null,
-      source_platform: overrides.source_platform ?? null,
-      eclipse_reveal_date: input.eclipse_reveal_date ?? null,
-      tags: input.tags ?? [],
-    },
   };
-
-  // Include source metadata as top-level key in IPFS payload
-  if (sourceMetadata) {
-    metadata['source'] = sourceMetadata;
-  }
 
   // 9. Pin metadata to IPFS
   const metadataCid = await pinMetadata(metadata);
@@ -503,19 +468,6 @@ export async function executeMint(
   return result;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase label helper (for NFT metadata description)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function phaseLabel(phase: Phase): string {
-  const map: Record<Phase, string> = {
-    new_moon: 'New Moon',
-    crescent: 'Crescent',
-    gibbous: 'Gibbous',
-    full_moon: 'Full Moon',
-  };
-  return map[phase];
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler

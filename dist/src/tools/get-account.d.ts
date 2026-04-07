@@ -7,6 +7,7 @@ interface GetAccountResponse {
     total_minted: number;
     default_phase: Phase;
     legacy_plan: boolean;
+    legacy_status: boolean;
 }
 export declare function handleGetAccount(_rawInput: unknown, accountContext: AccountContext): Promise<GetAccountResponse>;
 export {};

@@ -794,6 +794,7 @@ app.get('/api/account', async (req, res) => {
         total_minted: account.total_minted,
         default_phase: account.default_phase,
         legacy_plan: account.legacy_plan,
+        legacy_status: account.legacy_plan,
         created_at: account.created_at,
     });
 });
@@ -841,6 +842,7 @@ app.patch('/api/account', async (req, res) => {
         total_minted: updated.total_minted,
         default_phase: updated.default_phase,
         legacy_plan: updated.legacy_plan,
+        legacy_status: updated.legacy_plan,
         created_at: updated.created_at,
     });
 });

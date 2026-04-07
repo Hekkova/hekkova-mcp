@@ -12,6 +12,7 @@ export async function handleGetAccount(_rawInput, accountContext) {
         total_minted: account.total_minted,
         default_phase: account.default_phase,
         legacy_plan: account.legacy_plan,
+        legacy_status: account.legacy_plan,
     };
 }
 //# sourceMappingURL=get-account.js.map

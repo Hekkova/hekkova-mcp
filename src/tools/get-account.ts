@@ -12,6 +12,7 @@ interface GetAccountResponse {
   total_minted: number;
   default_phase: Phase;
   legacy_plan: boolean;
+  legacy_status: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,5 +37,6 @@ export async function handleGetAccount(
     total_minted: account.total_minted,
     default_phase: account.default_phase,
     legacy_plan: account.legacy_plan,
+    legacy_status: account.legacy_plan,
   };
 }

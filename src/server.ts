@@ -17,8 +17,8 @@ import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
 import multer from 'multer';
 import { handleMintMoment, executeMint, SourceMetadataSchema } from './tools/mint-moment.js';
-import { pinMedia, unpinFromPinata } from './services/storage.js';
-import { insertStagingUpload, getStagingUpload, deleteStagingUpload, deleteExpiredStagingUploads } from './services/database.js';
+import { pinMedia, unpinFromPinata, checkFilecoinDealStatus } from './services/storage.js';
+import { insertStagingUpload, getStagingUpload, deleteStagingUpload, deleteExpiredStagingUploads, getMomentsWithPendingFilecoin, updateFilecoinStatus } from './services/database.js';
 import { handleMintFromUrl } from './tools/mint-from-url.js';
 import { handleListMoments } from './tools/list-moments.js';
 import { handleGetMoment } from './tools/get-moment.js';
@@ -1738,5 +1738,49 @@ setInterval(async () => {
     console.error('[staging] Cleanup error:', (err as Error).message);
   }
 }, 5 * 60 * 1000);
+
+// ── Filecoin deal status checker — runs on startup and every 6 hours ─────────
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function checkFilecoinDeals(): Promise<void> {
+  let pending: Awaited<ReturnType<typeof getMomentsWithPendingFilecoin>>;
+  try {
+    pending = await getMomentsWithPendingFilecoin();
+  } catch (err) {
+    console.error('[filecoin] Failed to query pending deals:', (err as Error).message);
+    return;
+  }
+
+  if (pending.length === 0) return;
+  console.log(`[filecoin] Checking deal status for ${pending.length} pending moment(s)`);
+
+  for (const moment of pending) {
+    if (!moment.lighthouse_cid) continue;
+    try {
+      const isStale = moment.filecoin_archived_at
+        ? Date.now() - new Date(moment.filecoin_archived_at).getTime() > SEVEN_DAYS_MS
+        : false;
+
+      const status = await checkFilecoinDealStatus(moment.lighthouse_cid);
+
+      if (status?.active) {
+        await updateFilecoinStatus(moment.block_id, {
+          filecoin_status: 'sealed',
+          filecoin_deal_id: status.dealId ?? null,
+        });
+        console.log(`[filecoin] Sealed: ${moment.block_id} (deal ${status.dealId ?? 'unknown'})`);
+      } else if (isStale) {
+        await updateFilecoinStatus(moment.block_id, { filecoin_status: 'failed' });
+        console.warn(`[filecoin] Marked failed (>7 days, no active deal): ${moment.block_id}`);
+      }
+    } catch (err) {
+      console.error(`[filecoin] Error checking ${moment.block_id}:`, (err as Error).message);
+    }
+  }
+}
+
+// Run immediately on startup, then every 6 hours
+void checkFilecoinDeals();
+setInterval(() => { void checkFilecoinDeals(); }, 6 * 60 * 60 * 1000);
 
 export default app;

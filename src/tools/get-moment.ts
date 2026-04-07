@@ -31,6 +31,22 @@ function withoutEncryptionFields(moment: Moment): Omit<Moment, 'content_cipherte
   return rest;
 }
 
+/** Reshape flat filecoin_* columns into a nested `filecoin` object. */
+function withFilecoinObject(
+  moment: Omit<Moment, 'content_ciphertext' | 'content_iv'>
+): object {
+  const { lighthouse_cid, filecoin_status, filecoin_deal_id, filecoin_archived_at, ...rest } = moment;
+  return {
+    ...rest,
+    filecoin: {
+      lighthouse_cid: lighthouse_cid ?? null,
+      status: filecoin_status ?? null,
+      deal_id: filecoin_deal_id ?? null,
+      archived_at: filecoin_archived_at ?? null,
+    },
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tool handler
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,7 +116,7 @@ export async function handleGetMoment(
 
     // Revealed: return full moment minus raw encryption fields, with eclipse status
     return {
-      ...withoutEncryptionFields(moment),
+      ...withFilecoinObject(withoutEncryptionFields(moment)),
       eclipse_locked: false,
     };
   }
@@ -110,10 +126,10 @@ export async function handleGetMoment(
   // The dashboard requests decryption via POST /api/moments/:block_id/decrypt.
   if (moment.encrypted) {
     return {
-      ...withoutEncryptionFields(moment),
+      ...withFilecoinObject(withoutEncryptionFields(moment)),
       decryption_note: 'Content is encrypted. Use POST /api/moments/:block_id/decrypt to access it.',
     };
   }
 
-  return withoutEncryptionFields(moment);
+  return withFilecoinObject(withoutEncryptionFields(moment));
 }

@@ -197,6 +197,33 @@ export async function uploadToLighthouse(
 }
 
 /**
+ * Check Filecoin deal status for a Lighthouse-pinned CID.
+ * Returns { active: true, dealId } when at least one deal is StorageDealActive,
+ * { active: false } when deals exist but are not yet sealed,
+ * or null on any error / no API key.
+ * Non-fatal — never throws.
+ */
+export async function checkFilecoinDealStatus(
+  cid: string
+): Promise<{ active: boolean; dealId?: string } | null> {
+  if (!config.lighthouseApiKey) return null;
+  try {
+    const result = await lighthouse.dealStatus(cid);
+    const deals = result?.data;
+    if (!deals || deals.length === 0) return { active: false };
+    const activeDeal = deals.find((d) => d.dealStatus === 'StorageDealActive');
+    if (activeDeal) {
+      const id = activeDeal.chainDealID ?? activeDeal.dealId;
+      return { active: true, dealId: id != null ? String(id) : undefined };
+    }
+    return { active: false };
+  } catch (err) {
+    console.error('[storage] Lighthouse dealStatus error:', err);
+    return null;
+  }
+}
+
+/**
  * Unpin a CID from Pinata. Non-fatal — logs on failure but never throws.
  */
 export async function unpinFromPinata(cid: string): Promise<void> {

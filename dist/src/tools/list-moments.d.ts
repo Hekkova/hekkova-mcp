@@ -12,18 +12,18 @@ export declare const ListMomentsInputSchema: z.ZodObject<{
     sort: "newest" | "oldest";
     limit: number;
     offset: number;
+    sealed?: boolean | undefined;
     search?: string | undefined;
     phase?: "new_moon" | "crescent" | "gibbous" | "full_moon" | undefined;
     category?: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | undefined;
-    sealed?: boolean | undefined;
 }, {
+    sealed?: boolean | undefined;
     search?: string | undefined;
     sort?: "newest" | "oldest" | undefined;
     phase?: "new_moon" | "crescent" | "gibbous" | "full_moon" | undefined;
     category?: "super_moon" | "blue_moon" | "super_blue_moon" | "eclipse" | undefined;
     limit?: number | undefined;
     offset?: number | undefined;
-    sealed?: boolean | undefined;
 }>;
 export type ListMomentsInput = z.infer<typeof ListMomentsInputSchema>;
 interface ListMomentsResponse {
@@ -42,6 +42,7 @@ interface MomentSummary {
     timestamp: string;
     media_cid: string;
     tags: string[];
+    filecoin_status: Moment['filecoin_status'];
     eclipse_reveal_date?: string;
     eclipse_locked?: boolean;
 }

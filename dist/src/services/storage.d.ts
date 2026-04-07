@@ -33,6 +33,17 @@ export declare function uploadHtmlToLighthouse(htmlContent: string, _fileName: s
  */
 export declare function uploadToLighthouse(mediaBase64: string, _mediaType: string, _fileName: string): Promise<string | null>;
 /**
+ * Check Filecoin deal status for a Lighthouse-pinned CID.
+ * Returns { active: true, dealId } when at least one deal is StorageDealActive,
+ * { active: false } when deals exist but are not yet sealed,
+ * or null on any error / no API key.
+ * Non-fatal — never throws.
+ */
+export declare function checkFilecoinDealStatus(cid: string): Promise<{
+    active: boolean;
+    dealId?: string;
+} | null>;
+/**
  * Unpin a CID from Pinata. Non-fatal — logs on failure but never throws.
  */
 export declare function unpinFromPinata(cid: string): Promise<void>;

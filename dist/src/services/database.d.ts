@@ -44,9 +44,23 @@ export declare function updateMomentWithNewContent(blockId: string, accountId: s
     encrypted: boolean;
     media_cid: string;
     lighthouse_cid: string | null;
+    filecoin_status?: 'pending' | 'sealed' | 'failed' | null;
+    filecoin_deal_id?: string | null;
+    filecoin_archived_at?: string | null;
     content_ciphertext: string | null;
     content_iv: string | null;
 }): Promise<Moment>;
+/** Returns all non-deleted moments with filecoin_status='pending' and a lighthouse_cid. */
+export declare function getMomentsWithPendingFilecoin(): Promise<Pick<Moment, 'block_id' | 'lighthouse_cid' | 'filecoin_archived_at'>[]>;
+/** Returns all non-deleted moments that have never been sent to Filecoin (no filecoin_status). */
+export declare function getMomentsWithoutFilecoin(): Promise<Pick<Moment, 'block_id' | 'media_cid' | 'title'>[]>;
+/** Update Filecoin archival status for a moment (admin — no account_id filter). */
+export declare function updateFilecoinStatus(blockId: string, update: {
+    filecoin_status: 'pending' | 'sealed' | 'failed';
+    filecoin_deal_id?: string | null;
+    filecoin_archived_at?: string | null;
+    lighthouse_cid?: string | null;
+}): Promise<void>;
 export declare function decrementMints(accountId: string): Promise<void>;
 export declare function decrementMintsBy(accountId: string, amount: number): Promise<void>;
 export declare function incrementTotalMinted(accountId: string): Promise<void>;

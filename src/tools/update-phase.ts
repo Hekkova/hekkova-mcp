@@ -250,6 +250,9 @@ export async function handleUpdatePhase(
     encrypted: needsEncryption,
     media_cid: newHtmlCid,
     lighthouse_cid: newLighthouseCid,
+    filecoin_status: newLighthouseCid ? 'pending' : null,
+    filecoin_deal_id: null,
+    filecoin_archived_at: newLighthouseCid ? new Date().toISOString() : null,
     content_ciphertext: newCiphertext,
     content_iv: newIv,
   });

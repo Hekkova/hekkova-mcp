@@ -359,6 +359,9 @@ export async function executeMint(input, accountContext, overrides = {}) {
         media_cid: htmlCid, // the self-contained HTML viewer CID
         metadata_cid: metadataCid,
         lighthouse_cid: lighthouseCid,
+        filecoin_status: lighthouseCid ? 'pending' : null,
+        filecoin_deal_id: null,
+        filecoin_archived_at: lighthouseCid ? new Date().toISOString() : null,
         content_ciphertext: contentCiphertext,
         content_iv: contentIv,
         media_type: input.media_type,

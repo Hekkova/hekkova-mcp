@@ -257,6 +257,9 @@ export async function updateMomentWithNewContent(
     encrypted: boolean;
     media_cid: string;
     lighthouse_cid: string | null;
+    filecoin_status?: 'pending' | 'sealed' | 'failed' | null;
+    filecoin_deal_id?: string | null;
+    filecoin_archived_at?: string | null;
     content_ciphertext: string | null;
     content_iv: string | null;
   }
@@ -273,6 +276,59 @@ export async function updateMomentWithNewContent(
 
   if (error || !data) throw new Error(`Failed to update moment: ${error?.message}`);
   return data as Moment;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Filecoin deal tracking
+//
+// Required migration — run scripts/migrate-filecoin.sql once in Supabase.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Returns all non-deleted moments with filecoin_status='pending' and a lighthouse_cid. */
+export async function getMomentsWithPendingFilecoin(): Promise<
+  Pick<Moment, 'block_id' | 'lighthouse_cid' | 'filecoin_archived_at'>[]
+> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('moments')
+    .select('block_id,lighthouse_cid,filecoin_archived_at')
+    .eq('filecoin_status', 'pending')
+    .not('lighthouse_cid', 'is', null)
+    .is('deleted_at', null);
+  if (error) throw new Error(`getMomentsWithPendingFilecoin: ${error.message}`);
+  return (data ?? []) as Pick<Moment, 'block_id' | 'lighthouse_cid' | 'filecoin_archived_at'>[];
+}
+
+/** Returns all non-deleted moments that have never been sent to Filecoin (no filecoin_status). */
+export async function getMomentsWithoutFilecoin(): Promise<
+  Pick<Moment, 'block_id' | 'media_cid' | 'title'>[]
+> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from('moments')
+    .select('block_id,media_cid,title')
+    .is('filecoin_status', null)
+    .is('deleted_at', null);
+  if (error) throw new Error(`getMomentsWithoutFilecoin: ${error.message}`);
+  return (data ?? []) as Pick<Moment, 'block_id' | 'media_cid' | 'title'>[];
+}
+
+/** Update Filecoin archival status for a moment (admin — no account_id filter). */
+export async function updateFilecoinStatus(
+  blockId: string,
+  update: {
+    filecoin_status: 'pending' | 'sealed' | 'failed';
+    filecoin_deal_id?: string | null;
+    filecoin_archived_at?: string | null;
+    lighthouse_cid?: string | null;
+  }
+): Promise<void> {
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from('moments')
+    .update(update)
+    .eq('block_id', blockId);
+  if (error) throw new Error(`updateFilecoinStatus: ${error.message}`);
 }
 
 export async function decrementMints(accountId: string): Promise<void> {

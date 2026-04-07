@@ -77,6 +77,9 @@ export interface Moment {
   media_cid: string;
   metadata_cid: string;
   lighthouse_cid: string | null;
+  filecoin_status: 'pending' | 'sealed' | 'failed' | null;
+  filecoin_deal_id: string | null;
+  filecoin_archived_at: string | null;
   content_ciphertext: string | null;
   content_iv: string | null;
   media_type: MediaType;

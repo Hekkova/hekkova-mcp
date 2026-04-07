@@ -42,6 +42,7 @@ interface MomentSummary {
   timestamp: string;
   media_cid: string;
   tags: string[];
+  filecoin_status: Moment['filecoin_status'];
   eclipse_reveal_date?: string;
   eclipse_locked?: boolean;
 }
@@ -97,6 +98,7 @@ export async function handleListMoments(
       // TODO: Replace with Lit Protocol time-based ACC for on-chain eclipse enforcement
       media_cid: isSealed ? '' : m.media_cid,
       tags: m.tags,
+      filecoin_status: m.filecoin_status,
     };
 
     if (isEclipse) {

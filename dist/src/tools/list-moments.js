@@ -51,6 +51,7 @@ export async function handleListMoments(rawInput, accountContext) {
             // TODO: Replace with Lit Protocol time-based ACC for on-chain eclipse enforcement
             media_cid: isSealed ? '' : m.media_cid,
             tags: m.tags,
+            filecoin_status: m.filecoin_status,
         };
         if (isEclipse) {
             summary.eclipse_locked = isSealed;

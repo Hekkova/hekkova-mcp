@@ -178,6 +178,46 @@ export async function updateMomentWithNewContent(blockId, accountId, updates) {
         throw new Error(`Failed to update moment: ${error?.message}`);
     return data;
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// Filecoin deal tracking
+//
+// Required migration — run scripts/migrate-filecoin.sql once in Supabase.
+// ─────────────────────────────────────────────────────────────────────────────
+/** Returns all non-deleted moments with filecoin_status='pending' and a lighthouse_cid. */
+export async function getMomentsWithPendingFilecoin() {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .select('block_id,lighthouse_cid,filecoin_archived_at')
+        .eq('filecoin_status', 'pending')
+        .not('lighthouse_cid', 'is', null)
+        .is('deleted_at', null);
+    if (error)
+        throw new Error(`getMomentsWithPendingFilecoin: ${error.message}`);
+    return (data ?? []);
+}
+/** Returns all non-deleted moments that have never been sent to Filecoin (no filecoin_status). */
+export async function getMomentsWithoutFilecoin() {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+        .from('moments')
+        .select('block_id,media_cid,title')
+        .is('filecoin_status', null)
+        .is('deleted_at', null);
+    if (error)
+        throw new Error(`getMomentsWithoutFilecoin: ${error.message}`);
+    return (data ?? []);
+}
+/** Update Filecoin archival status for a moment (admin — no account_id filter). */
+export async function updateFilecoinStatus(blockId, update) {
+    const supabase = getSupabase();
+    const { error } = await supabase
+        .from('moments')
+        .update(update)
+        .eq('block_id', blockId);
+    if (error)
+        throw new Error(`updateFilecoinStatus: ${error.message}`);
+}
 export async function decrementMints(accountId) {
     return decrementMintsBy(accountId, 1);
 }

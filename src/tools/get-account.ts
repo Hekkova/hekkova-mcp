@@ -7,6 +7,7 @@ import type { AccountContext, Phase } from '../types/index.js';
 interface GetAccountResponse {
   account_id: string;
   light_id: string | null;
+  wallet_address: string | null;
   display_name: string;
   created_at: string;
   total_minted: number;
@@ -32,6 +33,7 @@ export async function handleGetAccount(
   return {
     account_id: account.id,
     light_id: account.light_id,
+    wallet_address: account.wallet_address,
     display_name: account.display_name,
     created_at: account.created_at,
     total_minted: account.total_minted,

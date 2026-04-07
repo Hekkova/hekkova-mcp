@@ -7,6 +7,7 @@ export async function handleGetAccount(_rawInput, accountContext) {
     return {
         account_id: account.id,
         light_id: account.light_id,
+        wallet_address: account.wallet_address,
         display_name: account.display_name,
         created_at: account.created_at,
         total_minted: account.total_minted,

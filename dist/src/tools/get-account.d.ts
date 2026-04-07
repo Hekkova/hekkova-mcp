@@ -2,6 +2,7 @@ import type { AccountContext, Phase } from '../types/index.js';
 interface GetAccountResponse {
     account_id: string;
     light_id: string | null;
+    wallet_address: string | null;
     display_name: string;
     created_at: string;
     total_minted: number;

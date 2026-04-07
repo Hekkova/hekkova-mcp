@@ -20,11 +20,17 @@ import { createClient } from '@supabase/supabase-js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const LIGHTHOUSE_API_KEY = process.env['LIGHTHOUSE_API_KEY'] ?? '';
-const SUPABASE_URL       = process.env['SUPABASE_URL'] ?? '';
+const LIGHTHOUSE_API_KEY   = process.env['LIGHTHOUSE_API_KEY'] ?? '';
+const SUPABASE_URL         = process.env['SUPABASE_URL'] ?? '';
 const SUPABASE_SERVICE_KEY = process.env['SUPABASE_SERVICE_KEY'] ?? '';
-const PINATA_GATEWAY     = process.env['PINATA_GATEWAY'] ?? 'https://gateway.pinata.cloud';
-const DELAY_MS           = 2_000;
+const DELAY_MS = 2_000;
+
+// Ordered list of public IPFS gateways to try — no auth required.
+const IPFS_GATEWAYS = [
+  'https://ipfs.io',
+  'https://dweb.link',
+  'https://gateway.lighthouse.storage',
+];
 
 if (!LIGHTHOUSE_API_KEY) {
   console.error('LIGHTHOUSE_API_KEY is not set — aborting.');
@@ -44,19 +50,21 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function fetchFromIpfs(cid: string): Promise<Buffer | null> {
-  const url = `${PINATA_GATEWAY}/ipfs/${cid}`;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) {
-      console.warn(`  [fetch] ${res.status} for CID ${cid}`);
-      return null;
+  for (const gateway of IPFS_GATEWAYS) {
+    const url = `${gateway}/ipfs/${cid}`;
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const ab = await res.arrayBuffer();
+        return Buffer.from(ab);
+      }
+      console.warn(`  [fetch] ${res.status} from ${gateway}`);
+    } catch (err) {
+      console.warn(`  [fetch] Network error from ${gateway}:`, (err as Error).message);
     }
-    const ab = await res.arrayBuffer();
-    return Buffer.from(ab);
-  } catch (err) {
-    console.warn(`  [fetch] Network error for CID ${cid}:`, (err as Error).message);
-    return null;
   }
+  console.warn(`  [fetch] All gateways failed for CID ${cid}`);
+  return null;
 }
 
 async function uploadToLighthouse(buffer: Buffer): Promise<string | null> {

@@ -82,7 +82,7 @@ function renderContentJS(mediaType) {
         return `
       var img = document.createElement('img');
       img.src = 'data:${mediaType};base64,' + content;
-      img.style.cssText = 'max-width:100%;border-radius:12px;margin-top:1rem;';
+      img.style.cssText = 'max-width:100%;max-height:80vh;object-fit:contain;border-radius:12px;margin-top:1rem;';
       img.alt = '';
       contentEl.appendChild(img);`;
     }
@@ -91,7 +91,7 @@ function renderContentJS(mediaType) {
       var vid = document.createElement('video');
       vid.src = 'data:${mediaType};base64,' + content;
       vid.controls = true;
-      vid.style.cssText = 'max-width:100%;border-radius:12px;margin-top:1rem;';
+      vid.style.cssText = 'max-width:100%;max-height:80vh;object-fit:contain;border-radius:12px;margin-top:1rem;';
       contentEl.appendChild(vid);`;
     }
     if (mediaType.startsWith('audio/')) {
@@ -113,16 +113,16 @@ function renderContentJS(mediaType) {
 // For video moments, pass videoCid to use an IPFS gateway URL instead of base64 embed.
 function renderContentInline(content, mediaType, videoCid, ipfsGateway = 'https://gateway.pinata.cloud') {
     if (mediaType.startsWith('image/')) {
-        return `<img src="data:${mediaType};base64,${content}" style="max-width:100%;border-radius:12px;margin-top:1rem;" alt="">`;
+        return `<img src="data:${mediaType};base64,${content}" style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:12px;margin-top:1rem;" alt="">`;
     }
     if (mediaType.startsWith('video/')) {
         if (videoCid) {
-            return `<video controls style="max-width:100%;border-radius:12px;margin-top:1rem;">` +
+            return `<video controls style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:12px;margin-top:1rem;">` +
                 `<source src="${ipfsGateway}/ipfs/${videoCid}" type="${mediaType}">` +
                 `<a href="${ipfsGateway}/ipfs/${videoCid}" style="color:#E8A020">Download video</a>` +
                 `</video>`;
         }
-        return `<video controls style="max-width:100%;border-radius:12px;margin-top:1rem;"><source src="data:${mediaType};base64,${content}"></video>`;
+        return `<video controls style="max-width:100%;max-height:80vh;object-fit:contain;border-radius:12px;margin-top:1rem;"><source src="data:${mediaType};base64,${content}"></video>`;
     }
     if (mediaType.startsWith('audio/')) {
         return `<audio controls style="width:100%;margin-top:1rem;"><source src="data:${mediaType};base64,${content}"></audio>`;

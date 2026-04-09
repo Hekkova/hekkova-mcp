@@ -158,7 +158,7 @@ export async function handleUpdatePhase(
       const ciphertextCid = moment.content_ciphertext.slice(5);
       let ciphertextBase64: string;
       try {
-        const resp = await fetch(`https://ipfs.io/ipfs/${ciphertextCid}`);
+        const resp = await fetch(`${config.pinataGateway}/ipfs/${ciphertextCid}`);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         ciphertextBase64 = Buffer.from(await resp.arrayBuffer()).toString('base64');
       } catch (err) {
@@ -233,6 +233,7 @@ export async function handleUpdatePhase(
       ipfsCid: moment.media_cid,
       lighthouseCid: moment.lighthouse_cid ?? undefined,
       videoCid: momentVideoCid,
+      ipfsGateway: config.pinataGateway,
       encryption: {
         ...(newCiphertextCid ? { ciphertextCid: newCiphertextCid } : { ciphertext: encrypted.ciphertext }),
         iv: encrypted.iv,
@@ -266,6 +267,7 @@ export async function handleUpdatePhase(
       tokenId: String(moment.token_id),
       contractAddress: config.hekkovaContractAddress,
       videoCid: momentVideoCid,
+      ipfsGateway: config.pinataGateway,
     });
 
     newHtmlCid = await pinHtmlFile(html, `${safeTitle}.html`);

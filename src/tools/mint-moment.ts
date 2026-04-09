@@ -322,6 +322,7 @@ export async function executeMint(
       tokenId: '0',
       contractAddress: config.hekkovaContractAddress,
       videoCid: videoCid ?? undefined,
+      ipfsGateway: config.pinataGateway,
       encryption: {
         ...(ciphertextCid ? { ciphertextCid } : { ciphertext: encrypted.ciphertext }),
         iv: encrypted.iv,
@@ -356,6 +357,7 @@ export async function executeMint(
       tokenId: '0',
       contractAddress: config.hekkovaContractAddress,
       videoCid: videoCid ?? undefined,
+      ipfsGateway: config.pinataGateway,
     });
 
     htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
@@ -419,6 +421,7 @@ export async function executeMint(
           tokenId: String(tokenId),
           contractAddress: config.hekkovaContractAddress,
           videoCid: videoCid ?? undefined,
+          ipfsGateway: config.pinataGateway,
           encryption: {
             ...(ciphertextCid ? { ciphertextCid } : { ciphertext: contentCiphertext! }),
             iv: contentIv!,
@@ -440,6 +443,7 @@ export async function executeMint(
           tokenId: String(tokenId),
           contractAddress: config.hekkovaContractAddress,
           videoCid: videoCid ?? undefined,
+          ipfsGateway: config.pinataGateway,
         });
 
     htmlCid = await pinHtmlFile(finalHtml, `${safeTitle}.html`);

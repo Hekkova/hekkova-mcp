@@ -242,6 +242,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
             tokenId: '0',
             contractAddress: config.hekkovaContractAddress,
             videoCid: videoCid ?? undefined,
+            ipfsGateway: config.pinataGateway,
             encryption: {
                 ...(ciphertextCid ? { ciphertextCid } : { ciphertext: encrypted.ciphertext }),
                 iv: encrypted.iv,
@@ -275,6 +276,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
             tokenId: '0',
             contractAddress: config.hekkovaContractAddress,
             videoCid: videoCid ?? undefined,
+            ipfsGateway: config.pinataGateway,
         });
         htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
         lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
@@ -333,6 +335,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
                 tokenId: String(tokenId),
                 contractAddress: config.hekkovaContractAddress,
                 videoCid: videoCid ?? undefined,
+                ipfsGateway: config.pinataGateway,
                 encryption: {
                     ...(ciphertextCid ? { ciphertextCid } : { ciphertext: contentCiphertext }),
                     iv: contentIv,
@@ -354,6 +357,7 @@ export async function executeMint(input, accountContext, overrides = {}) {
                 tokenId: String(tokenId),
                 contractAddress: config.hekkovaContractAddress,
                 videoCid: videoCid ?? undefined,
+                ipfsGateway: config.pinataGateway,
             });
         htmlCid = await pinHtmlFile(finalHtml, `${safeTitle}.html`);
     }

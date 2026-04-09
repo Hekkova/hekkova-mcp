@@ -12,6 +12,8 @@ export interface MomentHTMLOptions {
     lighthouseCid?: string;
     /** IPFS CID of the raw video file — if set, video viewer uses an IPFS URL instead of base64 embed */
     videoCid?: string;
+    /** IPFS gateway base URL for video src and ciphertext fetch. Defaults to gateway.pinata.cloud. */
+    ipfsGateway?: string;
     encryption?: {
         ciphertext?: string;
         ciphertextCid?: string;

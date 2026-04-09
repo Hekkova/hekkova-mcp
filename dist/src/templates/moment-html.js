@@ -111,15 +111,15 @@ function renderContentJS(mediaType) {
 }
 // Render content inline for full_moon (server-side, no JS decryption needed)
 // For video moments, pass videoCid to use an IPFS gateway URL instead of base64 embed.
-function renderContentInline(content, mediaType, videoCid) {
+function renderContentInline(content, mediaType, videoCid, ipfsGateway = 'https://gateway.pinata.cloud') {
     if (mediaType.startsWith('image/')) {
         return `<img src="data:${mediaType};base64,${content}" style="max-width:100%;border-radius:12px;margin-top:1rem;" alt="">`;
     }
     if (mediaType.startsWith('video/')) {
         if (videoCid) {
             return `<video controls style="max-width:100%;border-radius:12px;margin-top:1rem;">` +
-                `<source src="https://ipfs.io/ipfs/${videoCid}" type="${mediaType}">` +
-                `<a href="https://ipfs.io/ipfs/${videoCid}" style="color:#E8A020">Download video</a>` +
+                `<source src="${ipfsGateway}/ipfs/${videoCid}" type="${mediaType}">` +
+                `<a href="${ipfsGateway}/ipfs/${videoCid}" style="color:#E8A020">Download video</a>` +
                 `</video>`;
         }
         return `<video controls style="max-width:100%;border-radius:12px;margin-top:1rem;"><source src="data:${mediaType};base64,${content}"></video>`;
@@ -138,7 +138,7 @@ function renderContentInline(content, mediaType, videoCid) {
 // Main export
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildMomentHTML(opts) {
-    const { title, content, mediaType, category, phase, createdAt, blockId, tokenId, contractAddress, ipfsCid = '', lighthouseCid = '', videoCid, encryption, } = opts;
+    const { title, content, mediaType, category, phase, createdAt, blockId, tokenId, contractAddress, ipfsCid = '', lighthouseCid = '', videoCid, ipfsGateway = 'https://gateway.pinata.cloud', encryption, } = opts;
     const isEncrypted = !!encryption;
     const catLabel = categoryLabel(category);
     const catColor = categoryColor(category);
@@ -146,7 +146,7 @@ export function buildMomentHTML(opts) {
     const phDesc = phaseDescription(phase);
     const dateStr = formatDate(createdAt);
     const polygonscanUrl = `https://polygonscan.com/token/${contractAddress}?a=${tokenId}`;
-    const ipfsUrl = ipfsCid ? `https://ipfs.io/ipfs/${ipfsCid}` : '';
+    const ipfsUrl = ipfsCid ? `${ipfsGateway}/ipfs/${ipfsCid}` : '';
     // ── Shared styles ─────────────────────────────────────────────────────────
     const css = `
 @import url('https://fonts.googleapis.com/css2?family=Righteous&family=Outfit:wght@400;500;600;700&display=swap');
@@ -296,7 +296,7 @@ input:focus{border-color:#E8A02044}
   ${metaBar}
   <div class="moment">
     <h1>${title.replace(/</g, '&lt;')}</h1>
-    <div class="moment-content">${renderContentInline(content, mediaType, videoCid)}</div>
+    <div class="moment-content">${renderContentInline(content, mediaType, videoCid, ipfsGateway)}</div>
   </div>
   <p class="footer">This moment is public and permanently stored on IPFS and the Polygon blockchain.</p>
 </div>
@@ -410,7 +410,7 @@ async function unlock(){
       // Fetch binary ciphertext from IPFS gateway
       var ctBuf;
       try{
-        var ctRes=await fetch('https://ipfs.io/ipfs/'+ENC.ciphertextCid);
+        var ctRes=await fetch('${ipfsGateway}/ipfs/'+ENC.ciphertextCid);
         if(!ctRes.ok)throw new Error('HTTP '+ctRes.status);
         ctBuf=await ctRes.arrayBuffer();
         console.log('[Hekkova] ciphertext fetched from IPFS, bytes:', ctBuf.byteLength);

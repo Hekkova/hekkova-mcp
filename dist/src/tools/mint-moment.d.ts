@@ -316,6 +316,10 @@ export type MintMomentInput = z.infer<typeof MintMomentInputSchema>;
 export declare function executeMint(input: MintMomentInput, accountContext: AccountContext, overrides?: {
     source_url?: string;
     source_platform?: string;
+    /** Pre-existing IPFS CID of the raw video — skips re-pinning (used by staging path) */
+    videoCid?: string;
+    /** Pre-computed video size in bytes — used when videoCid is provided */
+    videoSizeBytes?: number;
 }): Promise<MintResult>;
 export declare function handleMintMoment(rawInput: unknown, accountContext: AccountContext): Promise<MintResult>;
 //# sourceMappingURL=mint-moment.d.ts.map

@@ -516,14 +516,16 @@ const upload = multer({
 });
 const STAGING_UPLOAD_TYPES = [
     'image/png', 'image/jpeg', 'image/gif',
-    'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain',
+    'video/mp4', 'video/webm', 'video/quicktime',
+    'audio/mp3', 'audio/wav', 'text/plain',
 ];
 const STAGING_UPLOAD_RATE_LIMIT = 10; // max per minute per account
 const STAGING_TTL_MS = 15 * 60 * 1000; // 15 minutes
 function contentTypeToExt(ct) {
     const map = {
         'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif',
-        'video/mp4': 'mp4', 'audio/mp3': 'mp3', 'audio/wav': 'wav', 'text/plain': 'txt',
+        'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+        'audio/mp3': 'mp3', 'audio/wav': 'wav', 'text/plain': 'txt',
     };
     return map[ct] ?? 'bin';
 }
@@ -1220,6 +1222,7 @@ app.post('/api/mint', (req, res, next) => {
         NOT_FOUND: 404,
         INVALID_INPUT: 400,
         UNAUTHORIZED: 401,
+        STORAGE_ERROR: 503,
     };
     const isMultipart = (req.headers['content-type'] ?? '').includes('multipart/form-data');
     if (isMultipart) {
@@ -1238,7 +1241,7 @@ app.post('/api/mint', (req, res, next) => {
             res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
             return;
         }
-        const VALID_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'audio/mp3', 'audio/wav', 'text/plain'];
+        const VALID_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime', 'audio/mp3', 'audio/wav', 'text/plain'];
         const mediaType = req.file.mimetype;
         if (!VALID_MEDIA_TYPES.includes(mediaType)) {
             res.status(400).json({
@@ -1378,7 +1381,8 @@ app.post('/api/mint', (req, res, next) => {
         // Resolve the stored content_type to a supported MediaType
         const STAGING_TYPE_MAP = {
             'image/png': 'image/png', 'image/jpeg': 'image/jpeg', 'image/jpg': 'image/jpeg',
-            'image/gif': 'image/gif', 'video/mp4': 'video/mp4',
+            'image/gif': 'image/gif',
+            'video/mp4': 'video/mp4', 'video/webm': 'video/webm', 'video/quicktime': 'video/quicktime',
             'audio/mpeg': 'audio/mp3', 'audio/mp3': 'audio/mp3', 'audio/wav': 'audio/wav',
             'text/plain': 'text/plain',
         };
@@ -1387,7 +1391,50 @@ app.post('/api/mint', (req, res, next) => {
             res.status(400).json({ error: 'INVALID_MEDIA_TYPE', message: `Unsupported staging content type: ${staging.content_type}` });
             return;
         }
-        // Fetch the media buffer from IPFS via Pinata gateway
+        // For video: the file is already pinned at staging.cid — skip re-download/re-pin.
+        // For encrypted phases, we still need the raw bytes to encrypt; for full_moon we skip entirely.
+        const isVideoStaging = mediaType.startsWith('video/');
+        if (isVideoStaging) {
+            const needsVideoContent = phase !== 'full_moon'; // encrypted phases need the bytes
+            let videoBase64 = '';
+            if (needsVideoContent) {
+                try {
+                    const response = await fetch(`${config.pinataGateway}/ipfs/${staging.cid}`);
+                    if (!response.ok)
+                        throw new Error(`HTTP ${response.status}`);
+                    videoBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
+                }
+                catch (err) {
+                    console.error(`[POST /api/mint] failed to fetch staging video CID ${staging.cid}:`, err.message);
+                    res.status(502).json({ error: 'STAGING_FETCH_FAILED', message: 'Failed to retrieve staged file from storage. Try uploading again.' });
+                    return;
+                }
+            }
+            console.log(`[${new Date().toISOString()}] POST /api/mint (staging-video) | account=${accountContext.account.id} | title="${title}" | phase=${phase} | cid=${staging.cid}`);
+            try {
+                const result = await executeMint({
+                    title,
+                    media: videoBase64,
+                    media_type: mediaType,
+                    phase: phase,
+                    category: (category ?? null),
+                    description,
+                    tags,
+                    eclipse_reveal_date: body.eclipse_reveal_date,
+                }, accountContext, { videoCid: staging.cid, videoSizeBytes: staging.size_bytes });
+                await deleteStagingUpload(stagingKey);
+                // Do NOT unpin staging.cid — it is now the permanent video IPFS pin
+                res.status(201).json(result);
+            }
+            catch (err) {
+                const e = err;
+                const code = e.code ?? 'INTERNAL_ERROR';
+                console.error(`[POST /api/mint] ${code}:`, e.message);
+                res.status(MINT_ERROR_STATUS[code] ?? 500).json({ error: code, message: e.message });
+            }
+            return;
+        }
+        // Non-video: fetch the media buffer from IPFS via Pinata gateway
         const gatewayUrl = `${config.pinataGateway}/ipfs/${staging.cid}`;
         let mediaBuffer;
         try {
@@ -1411,6 +1458,7 @@ app.post('/api/mint', (req, res, next) => {
                 category: (category ?? null),
                 description,
                 tags,
+                eclipse_reveal_date: body.eclipse_reveal_date,
             }, accountContext);
             // Clean up the staging record immediately — don't wait for TTL expiry
             await deleteStagingUpload(stagingKey);

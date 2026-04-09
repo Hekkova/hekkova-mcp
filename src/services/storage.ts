@@ -59,6 +59,42 @@ export async function pinMedia(
 }
 
 /**
+ * Pin a binary ciphertext (base64-encoded) to IPFS via Pinata as a raw binary file.
+ * Used for large encrypted content (e.g. video) so the HTML viewer can reference
+ * it by CID rather than embedding the full base64 payload inline.
+ * Returns the IPFS CID.
+ */
+export async function pinCiphertext(
+  ciphertextBase64: string,
+  fileName: string
+): Promise<string> {
+  const buffer = Buffer.from(ciphertextBase64, 'base64');
+  const formData = new FormData();
+  formData.append('file', new Blob([buffer], { type: 'application/octet-stream' }), fileName);
+
+  let response: Response;
+  try {
+    response = await fetch(`${PINATA_BASE}/pinning/pinFileToIPFS`, {
+      method: 'POST',
+      headers: pinataHeaders(),
+      body: formData,
+    });
+  } catch (err) {
+    console.error('[storage] Pinata pinCiphertext network error:', err);
+    throw storageError();
+  }
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    console.error(`[storage] Pinata pinCiphertext failed: ${response.status} ${text}`);
+    throw storageError();
+  }
+
+  const data = (await response.json()) as { IpfsHash: string };
+  return data.IpfsHash;
+}
+
+/**
  * Pin a metadata JSON object to IPFS via Pinata.
  * Returns a real IPFS CID (IpfsHash) from Pinata.
  */

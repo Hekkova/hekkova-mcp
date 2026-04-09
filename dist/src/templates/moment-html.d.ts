@@ -10,8 +10,11 @@ export interface MomentHTMLOptions {
     contractAddress: string;
     ipfsCid?: string;
     lighthouseCid?: string;
+    /** IPFS CID of the raw video file — if set, video viewer uses an IPFS URL instead of base64 embed */
+    videoCid?: string;
     encryption?: {
-        ciphertext: string;
+        ciphertext?: string;
+        ciphertextCid?: string;
         iv: string;
         encryptedEntropy: string;
         entropyIV: string;

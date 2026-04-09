@@ -21,7 +21,7 @@
 
 export interface MomentHTMLOptions {
   title: string;
-  content: string;        // plaintext for full_moon; ignored (replaced by encryption.ciphertext) for others
+  content: string;        // plaintext for full_moon; ignored for encrypted or video moments
   mediaType: string;      // e.g. 'text/plain', 'image/jpeg', 'video/mp4', 'audio/mp3'
   category: string | null;
   phase: string;
@@ -31,8 +31,11 @@ export interface MomentHTMLOptions {
   contractAddress: string;
   ipfsCid?: string;
   lighthouseCid?: string;
+  /** IPFS CID of the raw video file — if set, video viewer uses an IPFS URL instead of base64 embed */
+  videoCid?: string;
   encryption?: {
-    ciphertext: string;       // base64 — content encrypted with master key
+    ciphertext?: string;      // base64 — content encrypted with master key (omit if ciphertextCid is set)
+    ciphertextCid?: string;   // IPFS CID of binary ciphertext — for large content (e.g. video)
     iv: string;               // base64 — AES-GCM IV
     encryptedEntropy: string; // base64 — AES-GCM(UTF-8(entropyHex), wrappingKey)
     entropyIV: string;        // base64
@@ -142,11 +145,18 @@ function renderContentJS(mediaType: string): string {
 }
 
 // Render content inline for full_moon (server-side, no JS decryption needed)
-function renderContentInline(content: string, mediaType: string): string {
+// For video moments, pass videoCid to use an IPFS gateway URL instead of base64 embed.
+function renderContentInline(content: string, mediaType: string, videoCid?: string): string {
   if (mediaType.startsWith('image/')) {
     return `<img src="data:${mediaType};base64,${content}" style="max-width:100%;border-radius:12px;margin-top:1rem;" alt="">`;
   }
   if (mediaType.startsWith('video/')) {
+    if (videoCid) {
+      return `<video controls style="max-width:100%;border-radius:12px;margin-top:1rem;">` +
+        `<source src="https://ipfs.io/ipfs/${videoCid}" type="${mediaType}">` +
+        `<a href="https://ipfs.io/ipfs/${videoCid}" style="color:#E8A020">Download video</a>` +
+        `</video>`;
+    }
     return `<video controls style="max-width:100%;border-radius:12px;margin-top:1rem;"><source src="data:${mediaType};base64,${content}"></video>`;
   }
   if (mediaType.startsWith('audio/')) {
@@ -168,7 +178,7 @@ export function buildMomentHTML(opts: MomentHTMLOptions): string {
   const {
     title, content, mediaType, category, phase,
     createdAt, blockId, tokenId, contractAddress,
-    ipfsCid = '', lighthouseCid = '', encryption,
+    ipfsCid = '', lighthouseCid = '', videoCid, encryption,
   } = opts;
 
   const isEncrypted = !!encryption;
@@ -332,7 +342,7 @@ input:focus{border-color:#E8A02044}
   ${metaBar}
   <div class="moment">
     <h1>${title.replace(/</g, '&lt;')}</h1>
-    <div class="moment-content">${renderContentInline(content, mediaType)}</div>
+    <div class="moment-content">${renderContentInline(content, mediaType, videoCid)}</div>
   </div>
   <p class="footer">This moment is public and permanently stored on IPFS and the Polygon blockchain.</p>
 </div>
@@ -342,8 +352,9 @@ input:focus{border-color:#E8A02044}
 
   // ── Encrypted path ────────────────────────────────────────────────────────
   const enc = encryption!;
+  // ciphertextCid: large content (video) stores ciphertext on IPFS rather than inline
   const encDataJson = JSON.stringify({
-    ciphertext: enc.ciphertext,
+    ...(enc.ciphertextCid ? { ciphertextCid: enc.ciphertextCid } : { ciphertext: enc.ciphertext }),
     iv: enc.iv,
     encryptedEntropy: enc.encryptedEntropy,
     entropyIV: enc.entropyIV,
@@ -437,18 +448,45 @@ async function unlock(){
       return showError('Incorrect passphrase. Please try again.');
     }
 
-    // 6. Import master key and decrypt content
+    // 6. Import master key and decrypt content.
+    //    Two modes depending on how the ciphertext was stored:
+    //    a) ciphertextCid — large content (e.g. video) stored as binary on IPFS; fetch then decrypt.
+    //    b) ciphertext — base64-encoded ciphertext embedded inline in this HTML.
     var mk=await subtle.importKey('raw',mkBits,{name:'AES-GCM'},false,['decrypt']);
     var contentBytes;
-    try{
-      contentBytes=await subtle.decrypt(
-        {name:'AES-GCM',iv:b64ToBytes(ENC.iv)},
-        mk,b64ToBytes(ENC.ciphertext)
-      );
-      console.log('[Hekkova] content decrypted, bytes:', contentBytes.byteLength);
-    }catch(e){
-      console.error('[Hekkova] content decrypt failed:', e);
-      return showError('Decryption failed. Please try again.');
+    if(ENC.ciphertextCid){
+      // Fetch binary ciphertext from IPFS gateway
+      var ctBuf;
+      try{
+        var ctRes=await fetch('https://ipfs.io/ipfs/'+ENC.ciphertextCid);
+        if(!ctRes.ok)throw new Error('HTTP '+ctRes.status);
+        ctBuf=await ctRes.arrayBuffer();
+        console.log('[Hekkova] ciphertext fetched from IPFS, bytes:', ctBuf.byteLength);
+      }catch(fetchErr){
+        console.error('[Hekkova] ciphertext fetch error:', fetchErr);
+        return showError('Failed to load encrypted content. Check your connection and try again.');
+      }
+      try{
+        contentBytes=await subtle.decrypt(
+          {name:'AES-GCM',iv:b64ToBytes(ENC.iv)},
+          mk,new Uint8Array(ctBuf)
+        );
+        console.log('[Hekkova] content decrypted, bytes:', contentBytes.byteLength);
+      }catch(e){
+        console.error('[Hekkova] content decrypt failed:', e);
+        return showError('Decryption failed. Please try again.');
+      }
+    }else{
+      try{
+        contentBytes=await subtle.decrypt(
+          {name:'AES-GCM',iv:b64ToBytes(ENC.iv)},
+          mk,b64ToBytes(ENC.ciphertext)
+        );
+        console.log('[Hekkova] content decrypted, bytes:', contentBytes.byteLength);
+      }catch(e){
+        console.error('[Hekkova] content decrypt failed:', e);
+        return showError('Decryption failed. Please try again.');
+      }
     }
 
     // 7. Decode content string.

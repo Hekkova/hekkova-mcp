@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { getMomentByBlockId, updateMomentWithNewContent, decrementMintsBy, logPhaseShift, getPhaseShiftCount } from '../services/database.js';
 import { shouldEncrypt, encryptContent, decryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
-import { pinHtmlFile, uploadHtmlToLighthouse } from '../services/storage.js';
+import { pinHtmlFile, pinCiphertext, uploadHtmlToLighthouse } from '../services/storage.js';
 import { buildMomentHTML } from '../templates/moment-html.js';
 import type { AccountContext, Phase } from '../types/index.js';
 import { config } from '../config.js';
@@ -153,11 +153,28 @@ export async function handleUpdatePhase(
   let plaintextContent: string;
 
   if (moment.content_ciphertext && moment.content_iv) {
-    plaintextContent = await decryptContent(
-      moment.content_ciphertext,
-      moment.content_iv,
-      account.id
-    );
+    // Video moments store ciphertext on IPFS — content_ciphertext holds 'ipfs:<cid>'
+    if (moment.content_ciphertext.startsWith('ipfs:')) {
+      const ciphertextCid = moment.content_ciphertext.slice(5);
+      let ciphertextBase64: string;
+      try {
+        const resp = await fetch(`https://ipfs.io/ipfs/${ciphertextCid}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        ciphertextBase64 = Buffer.from(await resp.arrayBuffer()).toString('base64');
+      } catch (err) {
+        throw Object.assign(
+          new Error(`Failed to retrieve video ciphertext from IPFS: ${(err as Error).message}`),
+          { code: 'STORAGE_ERROR' }
+        );
+      }
+      plaintextContent = await decryptContent(ciphertextBase64, moment.content_iv, account.id);
+    } else {
+      plaintextContent = await decryptContent(
+        moment.content_ciphertext,
+        moment.content_iv,
+        account.id
+      );
+    }
   } else if (!shouldEncrypt(previousPhase)) {
     // full_moon moment minted without passphrase setup — no stored ciphertext
     throw Object.assign(
@@ -178,6 +195,9 @@ export async function handleUpdatePhase(
 
   // 6. Rebuild the IPFS HTML viewer for the new phase
   const needsEncryption = shouldEncrypt(targetPhase);
+  const isVideoMomentPhase = moment.media_type?.startsWith('video/') && !!moment.source_capture_video_cid;
+  const momentVideoCid = isVideoMomentPhase ? (moment.source_capture_video_cid ?? undefined) : undefined;
+  const safeTitle = moment.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
 
   let newCiphertext: string | null = null;
   let newIv: string | null = null;
@@ -190,7 +210,14 @@ export async function handleUpdatePhase(
       getOwnerHtmlEncryptionFields(account.id),
     ]);
 
-    newCiphertext = encrypted.ciphertext;
+    // For video moments, pin ciphertext to IPFS to keep HTML small
+    let newCiphertextCid: string | null = null;
+    if (isVideoMomentPhase) {
+      newCiphertextCid = await pinCiphertext(encrypted.ciphertext, `${safeTitle}_enc.bin`);
+      newCiphertext = `ipfs:${newCiphertextCid}`;
+    } else {
+      newCiphertext = encrypted.ciphertext;
+    }
     newIv = encrypted.iv;
 
     const html = buildMomentHTML({
@@ -205,8 +232,9 @@ export async function handleUpdatePhase(
       contractAddress: config.hekkovaContractAddress,
       ipfsCid: moment.media_cid,
       lighthouseCid: moment.lighthouse_cid ?? undefined,
+      videoCid: momentVideoCid,
       encryption: {
-        ciphertext: encrypted.ciphertext,
+        ...(newCiphertextCid ? { ciphertextCid: newCiphertextCid } : { ciphertext: encrypted.ciphertext }),
         iv: encrypted.iv,
         encryptedEntropy: htmlFields.encryptedEntropy,
         entropyIV: htmlFields.entropyIV,
@@ -216,12 +244,12 @@ export async function handleUpdatePhase(
       },
     });
 
-    const safeTitle = moment.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
     newHtmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
     newLighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   } else {
     // Shifting to full_moon — plaintext HTML
-    if (account.passphrase_setup_complete) {
+    // For video: use IPFS URL instead of embedding base64; skip encrypting large content
+    if (account.passphrase_setup_complete && !isVideoMomentPhase) {
       const encrypted = await encryptContent(plaintextContent, account.id);
       newCiphertext = encrypted.ciphertext;
       newIv = encrypted.iv;
@@ -229,7 +257,7 @@ export async function handleUpdatePhase(
 
     const html = buildMomentHTML({
       title: moment.title,
-      content: plaintextContent,
+      content: isVideoMomentPhase ? '' : plaintextContent,
       mediaType: moment.media_type,
       category: moment.category,
       phase: targetPhase,
@@ -237,9 +265,9 @@ export async function handleUpdatePhase(
       blockId: block_id,
       tokenId: String(moment.token_id),
       contractAddress: config.hekkovaContractAddress,
+      videoCid: momentVideoCid,
     });
 
-    const safeTitle = moment.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
     newHtmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
     newLighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   }

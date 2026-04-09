@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import sharp from 'sharp';
 import { shouldEncrypt, encryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
-import { pinHtmlFile, pinMetadata, pinMedia, uploadHtmlToLighthouse } from '../services/storage.js';
+import { pinHtmlFile, pinMetadata, pinMedia, pinCiphertext, uploadHtmlToLighthouse } from '../services/storage.js';
 import { mintNFT } from '../services/blockchain.js';
 import { decrementMintsBy, incrementTotalMinted, insertMoment, getAccountEmail } from '../services/database.js';
 import { sendMintEmail } from '../services/email.js';
@@ -157,7 +157,14 @@ async function maybeCompressImage(
 export async function executeMint(
   input: MintMomentInput,
   accountContext: AccountContext,
-  overrides: { source_url?: string; source_platform?: string } = {}
+  overrides: {
+    source_url?: string;
+    source_platform?: string;
+    /** Pre-existing IPFS CID of the raw video — skips re-pinning (used by staging path) */
+    videoCid?: string;
+    /** Pre-computed video size in bytes — used when videoCid is provided */
+    videoSizeBytes?: number;
+  } = {}
 ): Promise<MintResult> {
   const { account } = accountContext;
 
@@ -249,15 +256,21 @@ export async function executeMint(
     );
   }
 
-  // 5. Pin raw video to IPFS (if video media) and compute size
+  // 5. Pin raw video to IPFS (if video media) and compute size.
+  //    If overrides.videoCid is set the video is already pinned (staging path) — skip re-pin.
   let videoCid: string | null = null;
   let videoSizeBytes: number | null = null;
   if (isVideo) {
-    const ext = input.media_type === 'video/mp4' ? 'mp4'
-      : input.media_type === 'video/webm' ? 'webm'
-      : 'mov';
-    videoSizeBytes = binarySize;
-    videoCid = await pinMedia(input.media, input.media_type, `video.${ext}`);
+    if (overrides.videoCid) {
+      videoCid = overrides.videoCid;
+      videoSizeBytes = overrides.videoSizeBytes ?? binarySize;
+    } else {
+      const ext = input.media_type === 'video/mp4' ? 'mp4'
+        : input.media_type === 'video/webm' ? 'webm'
+        : 'mov';
+      videoSizeBytes = binarySize;
+      videoCid = await pinMedia(input.media, input.media_type, `video.${ext}`);
+    }
   }
 
   // 6. (source metadata intentionally not merged here — video CID/size are
@@ -268,6 +281,7 @@ export async function executeMint(
   let lighthouseCid: string | null;
   let contentCiphertext: string | null = null;
   let contentIv: string | null = null;
+  let ciphertextCid: string | null = null; // IPFS CID of pinned ciphertext (video moments)
 
   const rawContent = input.media; // base64 for media, text string for text/plain
   const safeTitle = input.title.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 50);
@@ -282,9 +296,18 @@ export async function executeMint(
       getOwnerHtmlEncryptionFields(account.id),
     ]);
 
-    contentCiphertext = encrypted.ciphertext;
-    contentIv = encrypted.iv;
     htmlFields = fields;
+
+    if (isVideo && videoCid) {
+      // Video: pin ciphertext as a separate IPFS file so the HTML viewer stays small.
+      // Store 'ipfs:<cid>' in content_ciphertext so update-phase can recover it later.
+      ciphertextCid = await pinCiphertext(encrypted.ciphertext, `${safeTitle}_enc.bin`);
+      contentCiphertext = `ipfs:${ciphertextCid}`;
+      contentIv = encrypted.iv;
+    } else {
+      contentCiphertext = encrypted.ciphertext;
+      contentIv = encrypted.iv;
+    }
 
     // Build HTML with encrypted payload embedded.
     // blockId/tokenId are placeholders here — we re-pin with real values after minting.
@@ -298,8 +321,9 @@ export async function executeMint(
       blockId: 'pending',
       tokenId: '0',
       contractAddress: config.hekkovaContractAddress,
+      videoCid: videoCid ?? undefined,
       encryption: {
-        ciphertext: encrypted.ciphertext,
+        ...(ciphertextCid ? { ciphertextCid } : { ciphertext: encrypted.ciphertext }),
         iv: encrypted.iv,
         encryptedEntropy: fields.encryptedEntropy,
         entropyIV: fields.entropyIV,
@@ -312,19 +336,18 @@ export async function executeMint(
     htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
     lighthouseCid = await uploadHtmlToLighthouse(html, `${safeTitle}.html`);
   } else {
-    // full_moon — embed plaintext in the HTML viewer
-    // Note: even for full_moon, store encrypted copy in Supabase if possible
-    //       so the owner can phase-shift to encrypted later.
-    let masterKeyEncrypted: { ciphertext: string; iv: string } | null = null;
-    if (account.passphrase_setup_complete) {
-      masterKeyEncrypted = await encryptContent(rawContent, account.id);
+    // full_moon — store encrypted copy in Supabase for text/image so the owner can
+    // phase-shift to encrypted later. Skip for video (too large; video CID is preserved).
+    if (account.passphrase_setup_complete && !isVideo) {
+      const masterKeyEncrypted = await encryptContent(rawContent, account.id);
       contentCiphertext = masterKeyEncrypted.ciphertext;
       contentIv = masterKeyEncrypted.iv;
     }
 
+    // For video moments, use the IPFS CID as the src instead of embedding base64.
     const html = buildMomentHTML({
       title: input.title,
-      content: rawContent,
+      content: isVideo ? '' : rawContent,
       mediaType: input.media_type,
       category: input.category,
       phase,
@@ -332,6 +355,7 @@ export async function executeMint(
       blockId: 'pending',
       tokenId: '0',
       contractAddress: config.hekkovaContractAddress,
+      videoCid: videoCid ?? undefined,
     });
 
     htmlCid = await pinHtmlFile(html, `${safeTitle}.html`);
@@ -394,8 +418,9 @@ export async function executeMint(
           blockId,
           tokenId: String(tokenId),
           contractAddress: config.hekkovaContractAddress,
+          videoCid: videoCid ?? undefined,
           encryption: {
-            ciphertext: contentCiphertext!,
+            ...(ciphertextCid ? { ciphertextCid } : { ciphertext: contentCiphertext! }),
             iv: contentIv!,
             encryptedEntropy: htmlFields.encryptedEntropy,
             entropyIV: htmlFields.entropyIV,
@@ -406,7 +431,7 @@ export async function executeMint(
         })
       : buildMomentHTML({
           title: input.title,
-          content: rawContent,
+          content: isVideo ? '' : rawContent,
           mediaType: input.media_type,
           category: input.category,
           phase,
@@ -414,6 +439,7 @@ export async function executeMint(
           blockId,
           tokenId: String(tokenId),
           contractAddress: config.hekkovaContractAddress,
+          videoCid: videoCid ?? undefined,
         });
 
     htmlCid = await pinHtmlFile(finalHtml, `${safeTitle}.html`);

@@ -4,6 +4,13 @@
  */
 export declare function pinMedia(mediaBase64: string, mediaType: string, fileName: string): Promise<string>;
 /**
+ * Pin a binary ciphertext (base64-encoded) to IPFS via Pinata as a raw binary file.
+ * Used for large encrypted content (e.g. video) so the HTML viewer can reference
+ * it by CID rather than embedding the full base64 payload inline.
+ * Returns the IPFS CID.
+ */
+export declare function pinCiphertext(ciphertextBase64: string, fileName: string): Promise<string>;
+/**
  * Pin a metadata JSON object to IPFS via Pinata.
  * Returns a real IPFS CID (IpfsHash) from Pinata.
  */

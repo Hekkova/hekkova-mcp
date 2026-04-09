@@ -11,7 +11,7 @@ let _supabase: SupabaseClient | null = null;
 
 function getSupabase(): SupabaseClient {
   if (!_supabase) {
-    _supabase = createClient(config.supabaseUrl || 'http://localhost:54321', config.supabaseServiceKey || 'service_role_placeholder');
+    _supabase = createClient(config.supabaseUrl, config.supabaseServiceKey);
   }
   return _supabase;
 }
@@ -332,43 +332,75 @@ export async function updateFilecoinStatus(
   if (error) throw new Error(`updateFilecoinStatus: ${error.message}`);
 }
 
-export async function decrementMints(accountId: string): Promise<void> {
-  return decrementMintsBy(accountId, 1);
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Atomic credit operations
+//
+// Required Supabase migrations — run once in SQL editor:
+//
+//   -- Atomic mint: decrements credits AND increments total_minted in one statement.
+//   -- Returns TRUE if successful, FALSE if mints_remaining < p_amount.
+//   CREATE OR REPLACE FUNCTION decrement_mints_and_increment_total(p_account_id UUID, p_amount INT)
+//   RETURNS BOOLEAN LANGUAGE plpgsql AS $$
+//   DECLARE updated INT;
+//   BEGIN
+//     UPDATE accounts
+//        SET mints_remaining = mints_remaining - p_amount,
+//            total_minted    = total_minted + 1
+//      WHERE id = p_account_id AND mints_remaining >= p_amount;
+//     GET DIAGNOSTICS updated = ROW_COUNT;
+//     RETURN updated > 0;
+//   END; $$;
+//
+//   -- Atomic phase-shift credit decrement (does not touch total_minted).
+//   -- Returns TRUE if successful, FALSE if mints_remaining < p_amount.
+//   CREATE OR REPLACE FUNCTION decrement_mints_by(p_account_id UUID, p_amount INT)
+//   RETURNS BOOLEAN LANGUAGE plpgsql AS $$
+//   DECLARE updated INT;
+//   BEGIN
+//     UPDATE accounts
+//        SET mints_remaining = mints_remaining - p_amount
+//      WHERE id = p_account_id AND mints_remaining >= p_amount;
+//     GET DIAGNOSTICS updated = ROW_COUNT;
+//     RETURN updated > 0;
+//   END; $$;
+//
+// ─────────────────────────────────────────────────────────────────────────────
 
-export async function decrementMintsBy(accountId: string, amount: number): Promise<void> {
+/**
+ * Atomically decrement mint credits AND increment total_minted in one SQL statement.
+ * Used exclusively by the mint path. Throws INSUFFICIENT_BALANCE if balance is too low.
+ */
+export async function atomicMintDecrement(accountId: string, amount: number): Promise<void> {
   const supabase = getSupabase();
-
-  const { data: acc } = await supabase
-    .from('accounts')
-    .select('mints_remaining')
-    .eq('id', accountId)
-    .single();
-  if (acc) {
-    await supabase
-      .from('accounts')
-      .update({ mints_remaining: Math.max(0, (acc as { mints_remaining: number }).mints_remaining - amount) })
-      .eq('id', accountId);
+  const { data, error } = await supabase.rpc('decrement_mints_and_increment_total', {
+    p_account_id: accountId,
+    p_amount: amount,
+  });
+  if (error) throw new Error(`Credit decrement failed: ${error.message}`);
+  if (!data) {
+    const msg = amount === 2
+      ? `Video mints cost 2 credits. No mint credits remaining. Purchase more at ${config.purchaseUrl}`
+      : `No mint credits remaining. Purchase more at ${config.purchaseUrl}`;
+    throw Object.assign(new Error(msg), { code: 'INSUFFICIENT_BALANCE' });
   }
 }
 
-export async function incrementTotalMinted(accountId: string): Promise<void> {
+/**
+ * Atomically decrement credits for a phase shift. Does not touch total_minted.
+ * Throws INSUFFICIENT_BALANCE if balance is too low.
+ */
+export async function decrementMintsBy(accountId: string, amount: number): Promise<void> {
   const supabase = getSupabase();
-
-  const { error } = await supabase.rpc('increment_total_minted', { account_id: accountId });
-  if (error) {
-    // Fallback: manual increment
-    const { data: acc } = await supabase
-      .from('accounts')
-      .select('total_minted')
-      .eq('id', accountId)
-      .single();
-    if (acc) {
-      await supabase
-        .from('accounts')
-        .update({ total_minted: (acc as { total_minted: number }).total_minted + 1 })
-        .eq('id', accountId);
-    }
+  const { data, error } = await supabase.rpc('decrement_mints_by', {
+    p_account_id: accountId,
+    p_amount: amount,
+  });
+  if (error) throw new Error(`Credit decrement failed: ${error.message}`);
+  if (!data) {
+    throw Object.assign(
+      new Error(`Insufficient credits. Purchase more at ${config.purchaseUrl}`),
+      { code: 'INSUFFICIENT_BALANCE' }
+    );
   }
 }
 

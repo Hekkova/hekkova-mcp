@@ -57,7 +57,7 @@ let _stripe: Stripe | null = null;
 
 function getStripe(): Stripe {
   if (!_stripe) {
-    _stripe = new Stripe(config.stripeSecretKey || 'sk_test_placeholder');
+    _stripe = new Stripe(config.stripeSecretKey);
   }
   return _stripe;
 }

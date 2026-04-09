@@ -40,7 +40,7 @@ export const MINT_PACKS = {
 let _stripe = null;
 function getStripe() {
     if (!_stripe) {
-        _stripe = new Stripe(config.stripeSecretKey || 'sk_test_placeholder');
+        _stripe = new Stripe(config.stripeSecretKey);
     }
     return _stripe;
 }

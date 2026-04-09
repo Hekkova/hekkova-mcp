@@ -5,8 +5,8 @@ import 'dotenv/config';
 function required(key) {
     const value = process.env[key];
     if (!value) {
-        console.warn(`[config] Warning: environment variable ${key} is not set.`);
-        return '';
+        console.error(`[config] FATAL: required environment variable ${key} is not set. Exiting.`);
+        process.exit(1);
     }
     return value;
 }

@@ -1299,10 +1299,10 @@ app.post(
       return;
     }
 
-    if (!moment.lit_acc_hash || !moment.lit_acc_conditions) {
+    if (!moment.content_ciphertext || !moment.content_iv) {
       res.status(400).json({
         error: 'DECRYPTION_UNAVAILABLE',
-        message: 'Decryption metadata is missing. This moment may have been minted before Lit Protocol was enabled.',
+        message: 'Decryption metadata is missing for this moment.',
       });
       return;
     }
@@ -1321,20 +1321,21 @@ app.post(
     }
 
     try {
-      // Fetch encrypted ciphertext from IPFS and re-encode to base64
-      const ipfsUrl = `${config.pinataGateway}/ipfs/${moment.media_cid}`;
-      const ipfsResponse = await fetch(ipfsUrl);
-      if (!ipfsResponse.ok) {
-        throw Object.assign(new Error('Failed to fetch encrypted content from IPFS'), { code: 'DECRYPTION_FAILED' });
+      // Video moments store ciphertext on IPFS (content_ciphertext holds 'ipfs:<cid>').
+      // Text/image moments store ciphertext directly in content_ciphertext.
+      let ciphertext: string;
+      if (moment.content_ciphertext.startsWith('ipfs:')) {
+        const ciphertextCid = moment.content_ciphertext.slice(5);
+        const ciphertextResp = await fetch(`${config.pinataGateway}/ipfs/${ciphertextCid}`);
+        if (!ciphertextResp.ok) {
+          throw Object.assign(new Error('Failed to fetch video ciphertext from IPFS'), { code: 'DECRYPTION_FAILED' });
+        }
+        ciphertext = Buffer.from(await ciphertextResp.arrayBuffer()).toString('base64');
+      } else {
+        ciphertext = moment.content_ciphertext;
       }
-      const encryptedBuffer = await ipfsResponse.arrayBuffer();
-      const ciphertext = Buffer.from(encryptedBuffer).toString('base64');
 
-      const decryptedMedia = await decryptContent(
-        ciphertext,
-        moment.lit_acc_hash,
-        moment.lit_acc_conditions
-      );
+      const decryptedMedia = await decryptContent(ciphertext, moment.content_iv, account.id);
 
       res.json({
         block_id: moment.block_id,

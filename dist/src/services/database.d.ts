@@ -61,9 +61,16 @@ export declare function updateFilecoinStatus(blockId: string, update: {
     filecoin_archived_at?: string | null;
     lighthouse_cid?: string | null;
 }): Promise<void>;
-export declare function decrementMints(accountId: string): Promise<void>;
+/**
+ * Atomically decrement mint credits AND increment total_minted in one SQL statement.
+ * Used exclusively by the mint path. Throws INSUFFICIENT_BALANCE if balance is too low.
+ */
+export declare function atomicMintDecrement(accountId: string, amount: number): Promise<void>;
+/**
+ * Atomically decrement credits for a phase shift. Does not touch total_minted.
+ * Throws INSUFFICIENT_BALANCE if balance is too low.
+ */
 export declare function decrementMintsBy(accountId: string, amount: number): Promise<void>;
-export declare function incrementTotalMinted(accountId: string): Promise<void>;
 export declare function getAllMoments(accountId: string): Promise<Moment[]>;
 export declare function getAccount(accountId: string): Promise<Account | null>;
 export declare function updateAccount(accountId: string, fields: {

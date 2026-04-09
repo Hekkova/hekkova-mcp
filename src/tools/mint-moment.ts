@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { shouldEncrypt, encryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
 import { pinHtmlFile, pinMetadata, pinMedia, pinCiphertext, uploadHtmlToLighthouse } from '../services/storage.js';
 import { mintNFT } from '../services/blockchain.js';
-import { decrementMintsBy, incrementTotalMinted, insertMoment, getAccountEmail } from '../services/database.js';
+import { atomicMintDecrement, insertMoment, getAccountEmail } from '../services/database.js';
 import { sendMintEmail } from '../services/email.js';
 import { buildMomentHTML } from '../templates/moment-html.js';
 import type { AccountContext, Category, MediaType, MintResult, Phase } from '../types/index.js';
@@ -234,14 +234,6 @@ export async function executeMint(
   // 3. Determine credit cost: video = 2 credits, everything else = 1
   const creditCost = isVideo ? 2 : 1;
 
-  // Check mint balance
-  if (account.mints_remaining < creditCost) {
-    const msg = creditCost === 2
-      ? `Video mints cost 2 credits. You have ${account.mints_remaining} credit(s) remaining. Purchase more at ${config.purchaseUrl}`
-      : `No mint credits remaining. Purchase more at ${config.purchaseUrl}`;
-    throw Object.assign(new Error(msg), { code: 'INSUFFICIENT_BALANCE' });
-  }
-
   const phase = input.phase as Phase;
   const timestamp = input.timestamp ?? new Date().toISOString();
   const needsEncryption = shouldEncrypt(phase);
@@ -453,9 +445,8 @@ export async function executeMint(
     console.warn(`[mint] Re-pin with real blockId failed for ${blockId}:`, (err as Error).message);
   }
 
-  // 11. Update account counters (deduct creditCost credits)
-  await decrementMintsBy(account.id, creditCost);
-  await incrementTotalMinted(account.id);
+  // 11. Atomically deduct credits and increment total_minted
+  await atomicMintDecrement(account.id, creditCost);
 
   // 12. Persist moment record
   const moment = await insertMoment({

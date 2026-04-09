@@ -39,6 +39,7 @@ interface MomentSummary {
     phase: Moment['phase'];
     category: Moment['category'];
     encrypted: boolean;
+    media_type: Moment['media_type'];
     timestamp: string;
     media_cid: string;
     tags: string[];

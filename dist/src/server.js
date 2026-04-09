@@ -1218,13 +1218,53 @@ app.post('/api/mint', (req, res, next) => {
         }
     }
     else {
-        // ── Option B: JSON body with upload_url from a prior /api/upload call ──
+        // ── Option B / C: JSON body ───────────────────────────────────────────
         const body = req.body;
         if (!body.upload_url) {
-            res.status(400).json({
-                error: 'BAD_REQUEST',
-                message: 'Provide either multipart/form-data with a file field, or application/json with an upload_url from /api/upload',
-            });
+            // ── Option C: text-only mint — no file needed ─────────────────────
+            const title = (body.title ?? '').trim();
+            if (!title) {
+                res.status(400).json({ error: 'BAD_REQUEST', message: 'title is required' });
+                return;
+            }
+            if (title.length > 200) {
+                res.status(400).json({ error: 'BAD_REQUEST', message: 'title must be 200 characters or fewer' });
+                return;
+            }
+            const phase = body.phase ?? 'new_moon';
+            if (!VALID_PHASES.includes(phase)) {
+                res.status(400).json({ error: 'BAD_REQUEST', message: `phase must be one of: ${VALID_PHASES.join(', ')}` });
+                return;
+            }
+            const categoryRaw = body.category ?? '';
+            const category = categoryRaw && VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : null;
+            if (categoryRaw && !VALID_CATEGORIES.includes(categoryRaw)) {
+                res.status(400).json({ error: 'BAD_REQUEST', message: `category must be one of: ${VALID_CATEGORIES.join(', ')}` });
+                return;
+            }
+            const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t).trim()).filter(Boolean) : [];
+            const description = body.description ?? undefined;
+            const textContent = description ? `${title}\n\n${description}` : title;
+            console.log(`[${new Date().toISOString()}] POST /api/mint (text) | account=${accountContext.account.id} | title="${title}" | phase=${phase}`);
+            try {
+                const result = await executeMint({
+                    title,
+                    media: textContent,
+                    media_type: 'text/plain',
+                    phase: phase,
+                    category: (category ?? null),
+                    description,
+                    tags,
+                    eclipse_reveal_date: body.eclipse_reveal_date,
+                }, accountContext);
+                res.status(201).json(result);
+            }
+            catch (err) {
+                const e = err;
+                const code = e.code ?? 'INTERNAL_ERROR';
+                console.error(`[POST /api/mint] ${code}:`, e.message);
+                res.status(MINT_ERROR_STATUS[code] ?? 500).json({ error: code, message: e.message });
+            }
             return;
         }
         // Extract the staging UUID from the URL

@@ -50,6 +50,9 @@ export const config = {
   stripeSecretKey: required('STRIPE_SECRET_KEY'),
   stripeWebhookSecret: required('STRIPE_WEBHOOK_SECRET'),
 
+  // ── Resend (transactional email) ─────────────────────────────────────────
+  resendApiKey: optional('RESEND_API_KEY', ''),
+
   // ── Redis (optional — enables persistent rate limiting across deploys) ────
   redisUrl: process.env['REDIS_URL'] ?? '',
 

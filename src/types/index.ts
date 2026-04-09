@@ -50,6 +50,7 @@ export interface Account {
   default_phase: Phase;
   legacy_plan: boolean;
   passphrase_setup_complete: boolean;
+  mint_email_opt_in: boolean;
   created_at: string;
 }
 

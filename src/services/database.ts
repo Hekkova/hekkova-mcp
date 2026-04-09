@@ -54,6 +54,7 @@ export async function getAccountByKeyHash(
         default_phase,
         legacy_plan,
         passphrase_setup_complete,
+        mint_email_opt_in,
         created_at
       )
     `
@@ -486,6 +487,17 @@ export async function insertAccount(id: string, displayName: string): Promise<Ac
 
   if (error || !data) throw new Error(`Failed to create account: ${error?.message}`);
   return data as Account;
+}
+
+/**
+ * Look up the email address for a Supabase auth user by their account ID.
+ * Uses the admin API (service role required). Returns null if not found.
+ */
+export async function getAccountEmail(accountId: string): Promise<string | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.auth.admin.getUserById(accountId);
+  if (error || !data.user) return null;
+  return data.user.email ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import { z } from 'zod';
 
 import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
+import { sendWelcomeEmail } from './services/email.js';
 import multer from 'multer';
 import { handleMintMoment, executeMint, SourceMetadataSchema } from './tools/mint-moment.js';
 import { pinMedia, unpinFromPinata, checkFilecoinDealStatus } from './services/storage.js';
@@ -850,7 +851,14 @@ async function requireSupabaseAuth(authHeader: string | undefined): Promise<Acco
   if (existing) return existing;
   // First login — provision an account row for this Supabase user
   const displayName = email ? email.split('@')[0] : userId.slice(0, 8);
-  return insertAccount(userId, displayName);
+  const account = await insertAccount(userId, displayName);
+  // Send welcome email — non-blocking, failure must not break signup
+  if (email && account.light_id) {
+    sendWelcomeEmail(email, account.display_name, account.light_id).catch((err: unknown) => {
+      console.error('[email] Welcome email failed:', (err as Error).message);
+    });
+  }
+  return account;
 }
 
 // POST /api/keys — generate a new API key for the authenticated account

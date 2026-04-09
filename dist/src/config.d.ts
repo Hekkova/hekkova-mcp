@@ -16,6 +16,7 @@ export declare const config: {
     readonly serverMasterSecret: string;
     readonly stripeSecretKey: string;
     readonly stripeWebhookSecret: string;
+    readonly resendApiKey: string;
     readonly redisUrl: string;
     readonly purchaseUrl: "https://hekkova.com/dashboard/billing";
     readonly dashboardKeysUrl: "https://hekkova.com/dashboard/keys";

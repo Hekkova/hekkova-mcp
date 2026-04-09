@@ -3,7 +3,8 @@ import sharp from 'sharp';
 import { shouldEncrypt, encryptContent, getOwnerHtmlEncryptionFields } from '../services/encryption.js';
 import { pinHtmlFile, pinMetadata, pinMedia, uploadHtmlToLighthouse } from '../services/storage.js';
 import { mintNFT } from '../services/blockchain.js';
-import { decrementMintsBy, incrementTotalMinted, insertMoment } from '../services/database.js';
+import { decrementMintsBy, incrementTotalMinted, insertMoment, getAccountEmail } from '../services/database.js';
+import { sendMintEmail } from '../services/email.js';
 import { buildMomentHTML } from '../templates/moment-html.js';
 import { config } from '../config.js';
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,6 +376,16 @@ export async function executeMint(input, accountContext, overrides = {}) {
         timestamp,
     });
     void moment;
+    // Send mint notification email — non-blocking, failure must not block the mint response
+    if (account.mint_email_opt_in) {
+        getAccountEmail(account.id).then((email) => {
+            if (!email)
+                return;
+            return sendMintEmail(email, account.display_name, input.title, blockId, tokenId, input.category);
+        }).catch((err) => {
+            console.error('[email] Mint email failed:', err.message);
+        });
+    }
     const balanceRemaining = Math.max(0, account.mints_remaining - creditCost);
     const result = {
         block_id: blockId,

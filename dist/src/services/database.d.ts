@@ -81,6 +81,11 @@ export declare function verifySupabaseToken(token: string): Promise<{
     email: string | undefined;
 }>;
 export declare function insertAccount(id: string, displayName: string): Promise<Account>;
+/**
+ * Look up the email address for a Supabase auth user by their account ID.
+ * Uses the admin API (service role required). Returns null if not found.
+ */
+export declare function getAccountEmail(accountId: string): Promise<string | null>;
 export declare function createApiKey(accountId: string, keyHash: string, keyPrefix: string): Promise<ApiKey>;
 export declare function listApiKeys(accountId: string): Promise<ApiKey[]>;
 export declare function revokeApiKey(keyId: string, accountId: string): Promise<void>;

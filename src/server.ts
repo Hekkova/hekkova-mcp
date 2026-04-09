@@ -29,7 +29,7 @@ import { handleGetBalance } from './tools/get-balance.js';
 import { handleGetAccount } from './tools/get-account.js';
 import type { AccountContext } from './types/index.js';
 import { createCheckoutSession, constructWebhookEvent, MINT_PACKS } from './services/stripe.js';
-import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir, getMomentByBlockId, claimStripeEvent } from './services/database.js';
+import { addMintsToAccount, setLegacyPlan, verifySupabaseToken, getAccount, insertAccount, createApiKey, listApiKeys, revokeApiKey, getAllMoments, updateAccount, addHeir, listHeirs, updateHeirAccessLevel, revokeHeir, getMomentByBlockId, claimStripeEvent, getPhaseShiftCount } from './services/database.js';
 import { decryptContent } from './services/encryption.js';
 import type { Account } from './types/index.js';
 import * as crypto from 'crypto';
@@ -1038,6 +1038,85 @@ app.patch(
       legacy_status: updated.legacy_plan,
       created_at: updated.created_at,
     });
+  }
+);
+
+// ── PATCH /api/moments/:block_id/phase — dashboard phase shift ────────────
+
+app.patch(
+  '/api/moments/:block_id/phase',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const blockId = String(req.params['block_id'] ?? '');
+    const { new_phase } = req.body as { new_phase?: string };
+
+    if (!new_phase) {
+      res.status(400).json({ error: 'BAD_REQUEST', message: 'new_phase is required' });
+      return;
+    }
+
+    const accountContext: AccountContext = {
+      account,
+      apiKey: {
+        id: '', account_id: account.id, key_hash: '', key_prefix: '',
+        environment: 'live', created_at: '', revoked_at: null,
+      },
+    };
+
+    const ERROR_STATUS: Record<string, number> = {
+      INVALID_INPUT: 400,
+      INVALID_BLOCK_ID: 404,
+      MOMENT_DELETED: 410,
+      ECLIPSE_SEALED: 403,
+      INSUFFICIENT_BALANCE: 402,
+      CONTENT_NOT_RECOVERABLE: 422,
+      CONTENT_NOT_FOUND: 500,
+    };
+
+    try {
+      const result = await handleUpdatePhase({ block_id: blockId, new_phase }, accountContext);
+      res.json(result);
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      const code = e.code ?? 'INTERNAL_ERROR';
+      console.error(`[PATCH /api/moments/:block_id/phase] ${code}:`, e.message);
+      res.status(ERROR_STATUS[code] ?? 500).json({ error: code, message: e.message });
+    }
+  }
+);
+
+// ── GET /api/phase-shifts/remaining — free shifts left this month ─────────
+
+app.get(
+  '/api/phase-shifts/remaining',
+  async (req: Request, res: Response): Promise<void> => {
+    let account: Account;
+    try {
+      account = await requireSupabaseAuth(req.headers.authorization);
+    } catch {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    if (!account.legacy_plan) {
+      res.json({ legacy_plan: false, remaining: 0, limit: 0 });
+      return;
+    }
+
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const LIMIT = 10;
+    const used = await getPhaseShiftCount(account.id, start, end);
+    const remaining = Math.max(0, LIMIT - used);
+    res.json({ legacy_plan: true, remaining, limit: LIMIT });
   }
 );
 

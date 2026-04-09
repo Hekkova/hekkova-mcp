@@ -4,6 +4,15 @@ import { generateExportUrl } from '../services/storage.js';
 import { config } from '../config.js';
 import type { AccountContext, Moment } from '../types/index.js';
 
+/** Strip server-side encryption fields that must never leave the server. */
+function withoutEncryptionFields(
+  moment: Moment
+): Omit<Moment, 'content_ciphertext' | 'content_iv' | 'lit_acc_hash' | 'lit_acc_conditions'> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { content_ciphertext, content_iv, lit_acc_hash, lit_acc_conditions, ...rest } = moment;
+  return rest;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,11 +91,13 @@ export async function handleExportMoments(
 
   const moments = await getAllMoments(accountId);
 
+  const sanitised = moments.map(withoutEncryptionFields);
+
   let serialised: string;
   if (format === 'json') {
-    serialised = JSON.stringify(moments, null, 2);
+    serialised = JSON.stringify(sanitised, null, 2);
   } else {
-    serialised = momentsToCsv(moments);
+    serialised = momentsToCsv(sanitised as Moment[]);
   }
 
   const downloadUrl = await generateExportUrl(serialised, format);

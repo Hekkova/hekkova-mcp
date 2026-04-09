@@ -179,7 +179,7 @@ export async function listMoments(
   if (opts.search) {
     // Strip PostgREST filter-syntax characters to prevent filter injection.
     // Allowed through: alphanumerics, spaces, and common punctuation.
-    const safeSearch = opts.search.replace(/[%_,()[\]'"\\]/g, '');
+    const safeSearch = opts.search.replace(/[%_,()[\]'"\\.]/g, '');
     if (safeSearch) {
       query = query.or(
         `title.ilike.%${safeSearch}%,description.ilike.%${safeSearch}%`
@@ -690,6 +690,7 @@ export async function revokeHeir(heirId: string, accountId: string): Promise<voi
  *
  * Uses INSERT … ON CONFLICT DO NOTHING to make this atomic — concurrent
  * Railway instances or Stripe retries cannot double-credit an account.
+ * Returns false on unknown DB errors (fail-closed) to prevent double-crediting during outages.
  */
 export async function claimStripeEvent(eventId: string): Promise<boolean> {
   const supabase = getSupabase();
@@ -709,9 +710,9 @@ export async function claimStripeEvent(eventId: string): Promise<boolean> {
       console.warn('[stripe] stripe_processed_events table missing — idempotency not enforced. Run the migration.');
       return true;
     }
-    // Other DB error: log and allow (fail-open so payments aren't blocked)
-    console.error('[stripe] claimStripeEvent DB error:', error.message);
-    return true;
+    // Other DB error: fail-closed to prevent double-crediting on DB outage
+    console.error('[stripe] claimStripeEvent DB error — rejecting event to prevent double-credit:', error.message);
+    return false;
   }
 
   return true;

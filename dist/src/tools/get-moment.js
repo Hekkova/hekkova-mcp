@@ -19,7 +19,7 @@ function formatTimeUntilReveal(revealDate) {
 /** Strip sensitive encryption fields that must not leave the server. */
 function withoutEncryptionFields(moment) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { content_ciphertext, content_iv, ...rest } = moment;
+    const { content_ciphertext, content_iv, lit_acc_hash, lit_acc_conditions, ...rest } = moment;
     return rest;
 }
 /** Reshape flat filecoin_* columns into a nested `filecoin` object. */

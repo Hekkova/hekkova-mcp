@@ -25,15 +25,17 @@ function formatTimeUntilReveal(revealDate: Date): string {
 }
 
 /** Strip sensitive encryption fields that must not leave the server. */
-function withoutEncryptionFields(moment: Moment): Omit<Moment, 'content_ciphertext' | 'content_iv'> {
+function withoutEncryptionFields(
+  moment: Moment
+): Omit<Moment, 'content_ciphertext' | 'content_iv' | 'lit_acc_hash' | 'lit_acc_conditions'> {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { content_ciphertext, content_iv, ...rest } = moment;
+  const { content_ciphertext, content_iv, lit_acc_hash, lit_acc_conditions, ...rest } = moment;
   return rest;
 }
 
 /** Reshape flat filecoin_* columns into a nested `filecoin` object. */
 function withFilecoinObject(
-  moment: Omit<Moment, 'content_ciphertext' | 'content_iv'>
+  moment: Omit<Moment, 'content_ciphertext' | 'content_iv' | 'lit_acc_hash' | 'lit_acc_conditions'>
 ): object {
   const { lighthouse_cid, filecoin_status, filecoin_deal_id, filecoin_archived_at, ...rest } = moment;
   return {

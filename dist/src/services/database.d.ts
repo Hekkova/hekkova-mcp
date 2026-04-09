@@ -107,6 +107,7 @@ export declare function revokeHeir(heirId: string, accountId: string): Promise<v
  *
  * Uses INSERT … ON CONFLICT DO NOTHING to make this atomic — concurrent
  * Railway instances or Stripe retries cannot double-credit an account.
+ * Returns false on unknown DB errors (fail-closed) to prevent double-crediting during outages.
  */
 export declare function claimStripeEvent(eventId: string): Promise<boolean>;
 export interface StagingUpload {

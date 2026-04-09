@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { validateApiKey } from './services/auth.js';
 import { sendWelcomeEmail } from './services/email.js';
 import multer from 'multer';
+import { fromBuffer as fileTypeFromBuffer } from 'file-type';
 import { handleMintMoment, executeMint, SourceMetadataSchema } from './tools/mint-moment.js';
 import { pinMedia, unpinFromPinata, checkFilecoinDealStatus } from './services/storage.js';
 import { insertStagingUpload, getStagingUpload, deleteStagingUpload, deleteExpiredStagingUploads, getMomentsWithPendingFilecoin, updateFilecoinStatus } from './services/database.js';
@@ -607,7 +608,11 @@ app.post(
   }
 );
 
-app.use(express.json({ limit: '100mb' })); // allow large base64 payloads
+// /mcp and /api/mint accept large base64 payloads; all other routes get a 1mb cap.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const largePayload = req.path === '/mcp' || req.path === '/api/mint';
+  express.json({ limit: largePayload ? '100mb' : '1mb' })(req, res, next);
+});
 
 // ── Health check ───────────────────────────────────────────────────────────
 app.get('/health', (_req: Request, res: Response) => {
@@ -644,6 +649,10 @@ const STAGING_UPLOAD_TYPES = [
 type StagingContentType = typeof STAGING_UPLOAD_TYPES[number];
 
 const STAGING_UPLOAD_RATE_LIMIT = 10; // max per minute per account
+const CHECKOUT_RATE_LIMIT = 10;       // POST /api/checkout
+const PHASE_SHIFT_RATE_LIMIT = 10;    // PATCH /api/moments/:block_id/phase
+const DECRYPT_RATE_LIMIT = 20;        // POST /api/moments/:block_id/decrypt
+const PHASE_REMAINING_RATE_LIMIT = 30; // GET /api/phase-shifts/remaining
 const STAGING_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
 function contentTypeToExt(ct: string): string {
@@ -670,6 +679,15 @@ async function executeStagingUpload(
 
   const raw = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
   const buffer = Buffer.from(raw, 'base64');
+
+  // Validate magic bytes to prevent Content-Type spoofing (e.g. HTML disguised as image/jpeg)
+  const detected = await fileTypeFromBuffer(buffer);
+  if (detected && detected.mime !== contentType) {
+    throw Object.assign(
+      new Error(`File content does not match declared content_type. Detected: ${detected.mime}, declared: ${contentType}`),
+      { code: 'INVALID_MEDIA_TYPE' }
+    );
+  }
 
   if (buffer.length > 50 * 1024 * 1024) {
     throw Object.assign(new Error('File exceeds 50MB limit after decoding'), { code: 'MEDIA_TOO_LARGE' });
@@ -786,6 +804,14 @@ app.post(
       account = await requireSupabaseAuth(req.headers.authorization);
     } catch {
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const rlCheckout = await checkRateLimit(`${account.id}:checkout`, CHECKOUT_RATE_LIMIT);
+    applyRateLimitHeaders(res, rlCheckout);
+    if (!rlCheckout.allowed) {
+      const retryAfter = Math.ceil((rlCheckout.resetAt - Date.now()) / 1000);
+      res.status(429).json({ error: 'RATE_LIMITED', message: `Too many checkout requests. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
       return;
     }
 
@@ -1056,6 +1082,14 @@ app.patch(
       return;
     }
 
+    const rlPhase = await checkRateLimit(`${account.id}:phase`, PHASE_SHIFT_RATE_LIMIT);
+    applyRateLimitHeaders(res, rlPhase);
+    if (!rlPhase.allowed) {
+      const retryAfter = Math.ceil((rlPhase.resetAt - Date.now()) / 1000);
+      res.status(429).json({ error: 'RATE_LIMITED', message: `Too many phase shift requests. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
+      return;
+    }
+
     const blockId = String(req.params['block_id'] ?? '');
     const { new_phase } = req.body as { new_phase?: string };
 
@@ -1104,6 +1138,14 @@ app.get(
       account = await requireSupabaseAuth(req.headers.authorization);
     } catch {
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const rlRemaining = await checkRateLimit(`${account.id}:phase-remaining`, PHASE_REMAINING_RATE_LIMIT);
+    applyRateLimitHeaders(res, rlRemaining);
+    if (!rlRemaining.allowed) {
+      const retryAfter = Math.ceil((rlRemaining.resetAt - Date.now()) / 1000);
+      res.status(429).json({ error: 'RATE_LIMITED', message: `Too many requests. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
       return;
     }
 
@@ -1264,7 +1306,8 @@ app.get(
     } else {
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', 'attachment; filename="moments.json"');
-      res.send(JSON.stringify(moments, null, 2));
+      const sanitised = moments.map(({ content_ciphertext: _c, content_iv: _iv, lit_acc_hash: _lh, lit_acc_conditions: _lc, ...rest }) => rest);
+      res.send(JSON.stringify(sanitised, null, 2));
     }
   }
 );
@@ -1283,6 +1326,14 @@ app.post(
       account = await requireSupabaseAuth(req.headers.authorization);
     } catch {
       res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid or missing authentication token' });
+      return;
+    }
+
+    const rlDecrypt = await checkRateLimit(`${account.id}:decrypt`, DECRYPT_RATE_LIMIT);
+    applyRateLimitHeaders(res, rlDecrypt);
+    if (!rlDecrypt.allowed) {
+      const retryAfter = Math.ceil((rlDecrypt.resetAt - Date.now()) / 1000);
+      res.status(429).json({ error: 'RATE_LIMITED', message: `Too many decrypt requests. Retry after ${retryAfter} seconds.`, retry_after: retryAfter });
       return;
     }
 

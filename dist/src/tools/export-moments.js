@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { getAllMoments } from '../services/database.js';
 import { generateExportUrl } from '../services/storage.js';
 import { config } from '../config.js';
+/** Strip server-side encryption fields that must never leave the server. */
+function withoutEncryptionFields(moment) {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { content_ciphertext, content_iv, lit_acc_hash, lit_acc_conditions, ...rest } = moment;
+    return rest;
+}
 // ─────────────────────────────────────────────────────────────────────────────
 // Zod Input Schema
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,12 +55,13 @@ export async function handleExportMoments(rawInput, accountContext) {
     const accountId = accountContext.account.id;
     console.log(`[${new Date().toISOString()}] export_moments | account=${accountId} | format=${format}`);
     const moments = await getAllMoments(accountId);
+    const sanitised = moments.map(withoutEncryptionFields);
     let serialised;
     if (format === 'json') {
-        serialised = JSON.stringify(moments, null, 2);
+        serialised = JSON.stringify(sanitised, null, 2);
     }
     else {
-        serialised = momentsToCsv(moments);
+        serialised = momentsToCsv(sanitised);
     }
     const downloadUrl = await generateExportUrl(serialised, format);
     return {

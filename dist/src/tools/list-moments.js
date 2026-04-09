@@ -48,6 +48,7 @@ export async function handleListMoments(rawInput, accountContext) {
             category: m.category,
             encrypted: m.encrypted,
             media_type: m.media_type,
+            source_capture_video_cid: m.source_capture_video_cid,
             timestamp: m.timestamp,
             // TODO: Replace with Lit Protocol time-based ACC for on-chain eclipse enforcement
             media_cid: isSealed ? '' : m.media_cid,

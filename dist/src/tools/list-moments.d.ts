@@ -40,6 +40,7 @@ interface MomentSummary {
     category: Moment['category'];
     encrypted: boolean;
     media_type: Moment['media_type'];
+    source_capture_video_cid: string | null;
     timestamp: string;
     media_cid: string;
     tags: string[];

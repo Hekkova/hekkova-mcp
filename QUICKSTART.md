@@ -119,7 +119,7 @@ Moments default to `new_moon`. Use `update_phase` to change visibility at any ti
 | Arc Builder | 20 | $9.00 |
 | Eternal Light | 50 | $20.00 |
 
-**Legacy Plan** — $27.30/year. Includes 10 free Phase Shifts/month, eclipse (time-locked) moments, and heir access.
+**Legacy Plan** — $29.50/year. Includes 10 free Phase Shifts/month, eclipse (time-locked) moments, and heir access.
 
 Buy credits at **[app.hekkova.com/billing](https://app.hekkova.com/billing)**.
 
